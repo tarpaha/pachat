@@ -2,12 +2,15 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using PaChat.Client.Protocol;
+using PaChat.Client.UI;
 
 namespace PaChat.Client;
 
 internal sealed class ChatClient(string host, int port, string nickname) : IDisposable
 {
     private readonly RSA _clientRsa = RSA.Create(2048);
+    private readonly ConsoleUI _ui = new();
+    private readonly List<string> _onlineClients = [];
     private RSA? _serverRsa;
 
     public async Task RunAsync(CancellationToken ct)
@@ -28,13 +31,11 @@ internal sealed class ChatClient(string host, int port, string nickname) : IDisp
         using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
         using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
 
-        // Send connect with our public key
         var pubKey = Convert.ToBase64String(_clientRsa.ExportSubjectPublicKeyInfo());
         await writer.WriteLineAsync(ProtocolSerializer.Serialize(new ConnectMessage(nickname, pubKey)));
 
-        // Expect keyexchange before doing anything else
         var line = await reader.ReadLineAsync(ct);
-        if (line is null) { Console.WriteLine("Server closed connection."); return; }
+        if (line is null) { Console.Error.WriteLine("Server closed connection."); return; }
 
         if (ProtocolSerializer.Deserialize(line) is KeyExchangeMessage kex)
         {
@@ -43,12 +44,13 @@ internal sealed class ChatClient(string host, int port, string nickname) : IDisp
         }
         else
         {
-            // Could be an error (e.g. NICKNAME_TAKEN) before keyexchange
-            RenderMessage(ProtocolSerializer.Deserialize(line));
+            // Error before keyexchange (e.g. NICKNAME_TAKEN) — UI not yet active
+            PrintPreUiMessage(ProtocolSerializer.Deserialize(line));
             return;
         }
 
-        Console.WriteLine($"Connected as [{nickname}]. Type messages and press Enter. Ctrl+C to quit.\n");
+        _ui.Initialize();
+        _ui.AddMessage($"connected as [{nickname}] — ctrl+c to quit", ConsoleColor.DarkGray);
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -58,11 +60,11 @@ internal sealed class ChatClient(string host, int port, string nickname) : IDisp
         await Task.WhenAny(receiveTask, sendTask);
         await linkedCts.CancelAsync();
 
-        // Drain the other task
         try { await Task.WhenAll(receiveTask, sendTask); }
         catch (OperationCanceledException) { }
 
-        Console.WriteLine("\nDisconnected.");
+        _ui.AddMessage("disconnected.", ConsoleColor.DarkGray);
+        await Task.Delay(800, CancellationToken.None); // let the user read the message
     }
 
     private async Task ReceiveLoopAsync(StreamReader reader, CancellationToken ct)
@@ -74,7 +76,7 @@ internal sealed class ChatClient(string host, int port, string nickname) : IDisp
                 var line = await reader.ReadLineAsync(ct);
                 if (line is null) break;
 
-                try { RenderMessage(ProtocolSerializer.Deserialize(line)); }
+                try { HandleMessage(ProtocolSerializer.Deserialize(line)); }
                 catch { }
             }
         }
@@ -88,16 +90,62 @@ internal sealed class ChatClient(string host, int port, string nickname) : IDisp
         {
             while (!ct.IsCancellationRequested)
             {
-                var text = await Task.Run(() => Console.ReadLine(), ct);
+                var text = await Task.Run(() => _ui.ReadLine(ct), ct);
                 if (text is null) break;
                 if (string.IsNullOrWhiteSpace(text)) continue;
 
                 var msg = Encrypt(text);
                 await writer.WriteLineAsync(ProtocolSerializer.Serialize(msg));
+
+                var time = DateTime.Now.ToString("HH:mm");
+                _ui.AddMessage($"[{time}] <{nickname}> {text}", ConsoleColor.DarkCyan);
             }
         }
         catch (OperationCanceledException) { }
         catch (IOException) { }
+    }
+
+    private void HandleMessage(BaseMessage? msg)
+    {
+        if (msg is null) return;
+
+        switch (msg)
+        {
+            case BroadcastMessage bcast:
+                var text = Decrypt(bcast);
+                var time = DateTime.Parse(bcast.Timestamp).ToLocalTime().ToString("HH:mm");
+                _ui.AddMessage($"[{time}] <{bcast.Nickname}> {text}", ConsoleColor.White);
+                break;
+
+            case SystemMessage sys:
+                _ui.AddMessage($"*** {sys.Text}", ConsoleColor.Yellow);
+                UpdateClientList(sys.Text);
+                break;
+
+            case ErrorMessage err:
+                _ui.AddMessage($"error {err.Code}: {err.Text}", ConsoleColor.Red);
+                break;
+        }
+    }
+
+    private void UpdateClientList(string text)
+    {
+        const string joined = " has joined the chat.";
+        const string left   = " has left the chat.";
+
+        if (text.EndsWith(joined))
+        {
+            var nick = text[..^joined.Length];
+            if (!_onlineClients.Contains(nick, StringComparer.OrdinalIgnoreCase))
+                _onlineClients.Add(nick);
+        }
+        else if (text.EndsWith(left))
+        {
+            var nick = text[..^left.Length];
+            _onlineClients.RemoveAll(n => string.Equals(n, nick, StringComparison.OrdinalIgnoreCase));
+        }
+
+        _ui.SetClients(_onlineClients);
     }
 
     private EncryptedMessage Encrypt(string text)
@@ -133,36 +181,16 @@ internal sealed class ChatClient(string host, int port, string nickname) : IDisp
         return Encoding.UTF8.GetString(plaintext);
     }
 
-    private void RenderMessage(BaseMessage? msg)
+    private static void PrintPreUiMessage(BaseMessage? msg)
     {
-        if (msg is null) return;
-
-        var prev = Console.ForegroundColor;
-        switch (msg)
-        {
-            case BroadcastMessage bcast:
-                var text = Decrypt(bcast);
-                var time = DateTime.Parse(bcast.Timestamp).ToLocalTime().ToString("HH:mm");
-                Console.ForegroundColor = bcast.Nickname == nickname ? ConsoleColor.DarkCyan : ConsoleColor.White;
-                Console.WriteLine($"[{time}] <{bcast.Nickname}> {text}");
-                break;
-
-            case SystemMessage sys:
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"*** {sys.Text}");
-                break;
-
-            case ErrorMessage err:
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"ERROR {err.Code}: {err.Text}");
-                break;
-        }
-        Console.ForegroundColor = prev;
+        if (msg is ErrorMessage err)
+            Console.Error.WriteLine($"error {err.Code}: {err.Text}");
     }
 
     public void Dispose()
     {
         _clientRsa.Dispose();
         _serverRsa?.Dispose();
+        _ui.Dispose();
     }
 }
