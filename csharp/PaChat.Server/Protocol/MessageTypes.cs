@@ -9,6 +9,7 @@ namespace PaChat.Server.Protocol;
 [JsonDerivedType(typeof(BroadcastMessage),    "broadcast")]
 [JsonDerivedType(typeof(SystemMessage),       "system")]
 [JsonDerivedType(typeof(ErrorMessage),        "error")]
+[JsonDerivedType(typeof(ClientListMessage),   "clientlist")]
 public abstract record BaseMessage;
 
 public sealed record ConnectMessage(
@@ -44,4 +45,8 @@ public sealed record SystemMessage(
 public sealed record ErrorMessage(
     [property: JsonPropertyName("code")] string Code,
     [property: JsonPropertyName("text")] string Text)
+    : BaseMessage;
+
+public sealed record ClientListMessage(
+    [property: JsonPropertyName("nicknames")] string[] Nicknames)
     : BaseMessage;

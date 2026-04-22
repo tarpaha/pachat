@@ -69,7 +69,8 @@ internal sealed class ClientConnection(TcpClient tcpClient, ChatServer server)
             }
             Nickname = nick;
 
-            // Step 4: broadcast join
+            // Step 4: send current client list to the new client, then broadcast join
+            await SendAsync(new ClientListMessage(server.GetClientNicknames()));
             await server.BroadcastSystemAsync($"{Nickname} has joined the chat.");
 
             // Step 5: message loop

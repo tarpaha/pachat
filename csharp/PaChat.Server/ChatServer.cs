@@ -51,6 +51,8 @@ internal sealed class ChatServer : IDisposable
     public void UnregisterClient(string nickname)
         => _clients.TryRemove(nickname, out _);
 
+    public string[] GetClientNicknames() => _clients.Keys.ToArray();
+
     // Decrypt message sent by a client (AES key encrypted with server's RSA public key)
     public string Decrypt(EncryptedMessage msg)
     {

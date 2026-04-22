@@ -117,6 +117,12 @@ internal sealed class ChatClient(string host, int port, string nickname) : IDisp
                 _ui.AddMessage($"[{time}] <{bcast.Nickname}> {text}", ConsoleColor.White);
                 break;
 
+            case ClientListMessage clientList:
+                _onlineClients.Clear();
+                _onlineClients.AddRange(clientList.Nicknames);
+                _ui.SetClients(_onlineClients);
+                break;
+
             case SystemMessage sys:
                 _ui.AddMessage($"*** {sys.Text}", ConsoleColor.Yellow);
                 UpdateClientList(sys.Text);
