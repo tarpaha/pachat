@@ -8,6 +8,7 @@ internal sealed class ConsoleUI : IDisposable
     private readonly List<(string text, ConsoleColor color)> _messages = new();
     private readonly List<string> _clients = new();
     private string _inputBuffer = "";
+    private readonly CancellationTokenSource _resizeCts = new();
 
     private const int PanelWidth = 22; // total width including borders
 
@@ -17,6 +18,7 @@ internal sealed class ConsoleUI : IDisposable
         Console.CursorVisible = false;
         lock (_lock)
             FullRender();
+        Task.Run(() => ResizeMonitorLoop(_resizeCts.Token));
     }
 
     public void AddMessage(string text, ConsoleColor color)
@@ -83,8 +85,26 @@ internal sealed class ConsoleUI : IDisposable
 
     public void Dispose()
     {
+        _resizeCts.Cancel();
+        _resizeCts.Dispose();
         Console.CursorVisible = true;
         Console.ResetColor();
+    }
+
+    // ── Resize monitor ────────────────────────────────────────────────────────
+
+    private void ResizeMonitorLoop(CancellationToken ct)
+    {
+        var (w, h) = (Console.WindowWidth, Console.WindowHeight);
+        while (!ct.IsCancellationRequested)
+        {
+            Thread.Sleep(100);
+            var (nw, nh) = (Console.WindowWidth, Console.WindowHeight);
+            if (nw == w && nh == h) continue;
+            (w, h) = (nw, nh);
+            lock (_lock)
+                FullRender();
+        }
     }
 
     // ── Rendering ─────────────────────────────────────────────────────────────
