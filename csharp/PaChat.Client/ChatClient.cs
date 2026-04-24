@@ -6,10 +6,10 @@ using PaChat.Client.UI;
 
 namespace PaChat.Client;
 
-internal sealed class ChatClient(string host, int port, string nickname) : IDisposable
+internal sealed class ChatClient(string host, int port, string nickname, IUserInterface ui) : IDisposable
 {
     private readonly RSA _clientRsa = RSA.Create(2048);
-    private readonly ConsoleUI _ui = new();
+    private readonly IUserInterface _ui = ui;
     private readonly List<string> _onlineClients = [];
     private RSA? _serverRsa;
 
@@ -197,6 +197,5 @@ internal sealed class ChatClient(string host, int port, string nickname) : IDisp
     {
         _clientRsa.Dispose();
         _serverRsa?.Dispose();
-        _ui.Dispose();
     }
 }

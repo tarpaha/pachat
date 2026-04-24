@@ -1,4 +1,5 @@
 using PaChat.Client;
+using PaChat.Client.UI;
 
 var host     = "127.0.0.1";
 var port     = 9000;
@@ -26,5 +27,6 @@ if (string.IsNullOrWhiteSpace(nickname))
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-using var client = new ChatClient(host, port, nickname);
+using var ui = new ConsoleUI();
+using var client = new ChatClient(host, port, nickname, ui);
 await client.RunAsync(cts.Token);

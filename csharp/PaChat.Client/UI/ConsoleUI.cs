@@ -2,7 +2,7 @@ using System.Text;
 
 namespace PaChat.Client.UI;
 
-internal sealed class ConsoleUI : IDisposable
+internal sealed class ConsoleUI : IUserInterface
 {
     private readonly object _lock = new();
     private readonly List<(string text, ConsoleColor color)> _messages = new();
