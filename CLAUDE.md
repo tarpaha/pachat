@@ -10,7 +10,7 @@ PaChat is a secure, encrypted peer-to-peer chat application. The primary impleme
 
 ```bash
 # Build everything
-dotnet build pachat.sln
+dotnet build csharp/pachat.sln
 
 # Run the server (defaults: 0.0.0.0:9000)
 dotnet run --project csharp/PaChat.Server/PaChat.Server.csproj [--host 0.0.0.0] [--port 9000]

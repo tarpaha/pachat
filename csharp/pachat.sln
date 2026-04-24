@@ -5,9 +5,9 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "csharp", "csharp", "{B41BF331-FCCB-2ADF-CDB6-767964B34647}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaChat.Server", "csharp\PaChat.Server\PaChat.Server.csproj", "{6940A643-5688-415B-BAB7-961797D5730C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaChat.Server", "PaChat.Server\PaChat.Server.csproj", "{6940A643-5688-415B-BAB7-961797D5730C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaChat.Client", "csharp\PaChat.Client\PaChat.Client.csproj", "{10C44BE3-87F4-4BB5-8D0F-19D65DCB1E85}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PaChat.Client", "PaChat.Client\PaChat.Client.csproj", "{10C44BE3-87F4-4BB5-8D0F-19D65DCB1E85}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
