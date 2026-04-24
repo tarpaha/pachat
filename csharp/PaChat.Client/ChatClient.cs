@@ -9,7 +9,6 @@ namespace PaChat.Client;
 internal sealed class ChatClient(string host, int port, string nickname, IUserInterface ui) : IDisposable
 {
     private readonly RSA _clientRsa = RSA.Create(2048);
-    private readonly IUserInterface _ui = ui;
     private readonly List<string> _onlineClients = [];
     private RSA? _serverRsa;
 
@@ -49,8 +48,8 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
             return;
         }
 
-        _ui.Initialize();
-        _ui.AddMessage($"connected as [{nickname}] — ctrl+c to quit", ConsoleColor.DarkGray);
+        ui.Initialize();
+        ui.AddMessage($"connected as [{nickname}] — ctrl+c to quit", ConsoleColor.DarkGray);
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -63,7 +62,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         try { await Task.WhenAll(receiveTask, sendTask); }
         catch (OperationCanceledException) { }
 
-        _ui.AddMessage("disconnected.", ConsoleColor.DarkGray);
+        ui.AddMessage("disconnected.", ConsoleColor.DarkGray);
         await Task.Delay(800, CancellationToken.None); // let the user read the message
     }
 
@@ -90,7 +89,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         {
             while (!ct.IsCancellationRequested)
             {
-                var text = await Task.Run(() => _ui.ReadLine(ct), ct);
+                var text = await Task.Run(() => ui.ReadLine(ct), ct);
                 if (text is null) break;
                 if (string.IsNullOrWhiteSpace(text)) continue;
 
@@ -98,7 +97,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
                 await writer.WriteLineAsync(ProtocolSerializer.Serialize(msg));
 
                 var time = DateTime.Now.ToString("HH:mm");
-                _ui.AddMessage($"[{time}] <{nickname}> {text}", ConsoleColor.DarkCyan);
+                ui.AddMessage($"[{time}] <{nickname}> {text}", ConsoleColor.DarkCyan);
             }
         }
         catch (OperationCanceledException) { }
@@ -114,22 +113,22 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
             case BroadcastMessage bcast:
                 var text = Decrypt(bcast);
                 var time = DateTime.Parse(bcast.Timestamp).ToLocalTime().ToString("HH:mm");
-                _ui.AddMessage($"[{time}] <{bcast.Nickname}> {text}", ConsoleColor.White);
+                ui.AddMessage($"[{time}] <{bcast.Nickname}> {text}", ConsoleColor.White);
                 break;
 
             case ClientListMessage clientList:
                 _onlineClients.Clear();
                 _onlineClients.AddRange(clientList.Nicknames);
-                _ui.SetClients(_onlineClients);
+                ui.SetClients(_onlineClients);
                 break;
 
             case SystemMessage sys:
-                _ui.AddMessage($"*** {sys.Text}", ConsoleColor.Yellow);
+                ui.AddMessage($"*** {sys.Text}", ConsoleColor.Yellow);
                 UpdateClientList(sys.Text);
                 break;
 
             case ErrorMessage err:
-                _ui.AddMessage($"error {err.Code}: {err.Text}", ConsoleColor.Red);
+                ui.AddMessage($"error {err.Code}: {err.Text}", ConsoleColor.Red);
                 break;
         }
     }
@@ -151,7 +150,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
             _onlineClients.RemoveAll(n => string.Equals(n, nick, StringComparison.OrdinalIgnoreCase));
         }
 
-        _ui.SetClients(_onlineClients);
+        ui.SetClients(_onlineClients);
     }
 
     private EncryptedMessage Encrypt(string text)
