@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace PaChat.Client.Protocol;
+namespace PaChat.Protocol;
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(ConnectMessage),      "connect")]

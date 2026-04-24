@@ -1,7 +1,7 @@
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
-using PaChat.Client.Protocol;
+using PaChat.Protocol;
 using PaChat.Client.UI;
 
 namespace PaChat.Client;

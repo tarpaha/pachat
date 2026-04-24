@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace PaChat.Server.Protocol;
+namespace PaChat.Protocol;
 
 public static class ProtocolSerializer
 {
