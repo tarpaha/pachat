@@ -87,8 +87,9 @@ internal sealed class ConsoleUI : IDisposable
     {
         _resizeCts.Cancel();
         _resizeCts.Dispose();
-        Console.CursorVisible = true;
         Console.ResetColor();
+        Console.Clear();
+        Console.CursorVisible = true;
     }
 
     // ── Resize monitor ────────────────────────────────────────────────────────
