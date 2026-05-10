@@ -2,7 +2,7 @@ using System.Text;
 
 namespace PaChat.Client.UI;
 
-internal sealed class ConsoleUI : IUserInterface
+internal sealed class ConsoleUI(string selfNickname) : IUserInterface
 {
     private readonly object _lock = new();
     private readonly List<(string text, ConsoleColor color)> _messages = new();
@@ -175,9 +175,11 @@ internal sealed class ConsoleUI : IUserInterface
 
         for (var i = 0; i < count; i++)
         {
+            var isSelf = string.Equals(_clients[i], selfNickname, StringComparison.OrdinalIgnoreCase);
             Console.ForegroundColor = ConsoleColor.Blue;
             SetPos(left, 4 + i); Console.Write('│');
-            SetPos(left + 1, 4 + i); Console.ForegroundColor = ConsoleColor.Red;
+            SetPos(left + 1, 4 + i);
+            Console.ForegroundColor = isSelf ? ConsoleColor.DarkCyan : ConsoleColor.Red;
             Console.Write(Fit(" " + _clients[i], innerW));
             Console.ForegroundColor = ConsoleColor.Blue;
             SetPos(left + PanelWidth - 1, 4 + i); Console.Write('│');

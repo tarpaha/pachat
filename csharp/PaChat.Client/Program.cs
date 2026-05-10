@@ -27,6 +27,6 @@ if (string.IsNullOrWhiteSpace(nickname))
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
-using var ui = new ConsoleUI();
+using var ui = new ConsoleUI(nickname);
 using var client = new ChatClient(host, port, nickname, ui);
 await client.RunAsync(cts.Token);
