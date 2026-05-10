@@ -39,6 +39,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
 
         ui.Initialize();
         ui.AddMessage($"connected as [{nickname}] — ctrl+c to quit", ConsoleColor.DarkGray);
+        ui.SetClients(GetRosterForUi());
 
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -172,6 +173,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
     private List<string> GetRosterForUi()
     {
         var list = _peers.Keys.ToList();
+        list.Add(nickname);
         list.Sort(StringComparer.OrdinalIgnoreCase);
         return list;
     }
