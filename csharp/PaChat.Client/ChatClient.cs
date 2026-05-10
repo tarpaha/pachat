@@ -35,7 +35,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         _writer = writer;
 
         _myPublicKeyBase64 = Convert.ToBase64String(_clientRsa.ExportSubjectPublicKeyInfo());
-        await SendAsync(new ConnectMessage(nickname, _myPublicKeyBase64));
+        await SendAsync(new ConnectMessage(nickname, _myPublicKeyBase64), ct);
 
         ui.Initialize();
         ui.AddMessage($"connected as [{nickname}] — ctrl+c to quit", ConsoleColor.DarkGray);
@@ -69,7 +69,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
                 try { msg = ProtocolSerializer.Deserialize(line); }
                 catch { continue; }
 
-                await HandleMessageAsync(msg);
+                await HandleMessageAsync(msg, ct);
             }
         }
         catch (OperationCanceledException) { }
@@ -92,7 +92,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
                 foreach (var (peerNick, peerKey) in _peers.ToArray())
                 {
                     var msg = EncryptForPeer(peerNick, peerKey, plaintextBytes, ts);
-                    await SendAsync(msg);
+                    await SendAsync(msg, ct);
                 }
 
                 var time = DateTime.Parse(ts).ToLocalTime().ToString("HH:mm");
@@ -103,7 +103,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         catch (IOException) { }
     }
 
-    private async Task HandleMessageAsync(BaseMessage? msg)
+    private async Task HandleMessageAsync(BaseMessage? msg, CancellationToken ct)
     {
         switch (msg)
         {
@@ -115,7 +115,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
                     To:        joined.Nickname,
                     From:      null,
                     Nickname:  nickname,
-                    PublicKey: _myPublicKeyBase64));
+                    PublicKey: _myPublicKeyBase64), ct);
                 break;
 
             case PeerHelloMessage hello:
@@ -178,18 +178,20 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         return list;
     }
 
-    private async Task SendAsync(BaseMessage msg)
+    private async Task SendAsync(BaseMessage msg, CancellationToken ct)
     {
         if (_writer is null) return;
         var line = ProtocolSerializer.Serialize(msg);
 
-        try { await _writeLock.WaitAsync(); }
+        try { await _writeLock.WaitAsync(ct); }
+        catch (OperationCanceledException) { return; }
         catch (ObjectDisposedException) { return; }
 
         try
         {
-            await _writer.WriteLineAsync(line);
+            await _writer.WriteLineAsync(line.AsMemory(), ct);
         }
+        catch (OperationCanceledException) { }
         catch (IOException) { }
         catch (ObjectDisposedException) { }
         finally
