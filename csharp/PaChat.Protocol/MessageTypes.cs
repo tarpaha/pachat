@@ -11,6 +11,12 @@ namespace PaChat.Protocol;
 [JsonDerivedType(typeof(ErrorMessage),      "error")]
 public abstract record BaseMessage;
 
+public interface IRoutable
+{
+    string? To { get; }
+    BaseMessage WithFrom(string senderNick);
+}
+
 public sealed record ConnectMessage(
     [property: JsonPropertyName("nickname")]  string Nickname,
     [property: JsonPropertyName("publicKey")] string PublicKey)
@@ -30,7 +36,10 @@ public sealed record PeerHelloMessage(
     [property: JsonPropertyName("from")]      string? From,
     [property: JsonPropertyName("nickname")]  string Nickname,
     [property: JsonPropertyName("publicKey")] string PublicKey)
-    : BaseMessage;
+    : BaseMessage, IRoutable
+{
+    public BaseMessage WithFrom(string senderNick) => this with { To = null, From = senderNick };
+}
 
 public sealed record ChatMessage(
     [property: JsonPropertyName("to")]           string? To,
@@ -40,7 +49,10 @@ public sealed record ChatMessage(
     [property: JsonPropertyName("iv")]           string Iv,
     [property: JsonPropertyName("ciphertext")]   string Ciphertext,
     [property: JsonPropertyName("tag")]          string Tag)
-    : BaseMessage;
+    : BaseMessage, IRoutable
+{
+    public BaseMessage WithFrom(string senderNick) => this with { To = null, From = senderNick };
+}
 
 public sealed record ErrorMessage(
     [property: JsonPropertyName("code")] string Code,

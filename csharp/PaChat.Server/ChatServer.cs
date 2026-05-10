@@ -56,16 +56,8 @@ internal sealed class ChatServer
 
     public async Task RouteAsync(string senderNick, BaseMessage msg)
     {
-        var (to, outgoing) = msg switch
-        {
-            PeerHelloMessage h => (h.To, (BaseMessage)(h with { To = null, From = senderNick })),
-            ChatMessage      c => (c.To, (BaseMessage)(c with { To = null, From = senderNick })),
-            _ => (null, null!)
-        };
-
-        if (to is null) return;
+        if (msg is not IRoutable routable || routable.To is not { } to) return;
         if (!_clients.TryGetValue(to, out var target)) return;
-
-        await target.SendAsync(outgoing);
+        await target.SendAsync(routable.WithFrom(senderNick));
     }
 }
