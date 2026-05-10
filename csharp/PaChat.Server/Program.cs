@@ -13,5 +13,5 @@ using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { cts.Cancel(); } catch (ObjectDisposedException) { } };
 
-using var server = new ChatServer(host, port);
+var server = new ChatServer(host, port);
 await server.RunAsync(cts.Token);

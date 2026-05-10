@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -9,8 +10,10 @@ namespace PaChat.Client;
 internal sealed class ChatClient(string host, int port, string nickname, IUserInterface ui) : IDisposable
 {
     private readonly RSA _clientRsa = RSA.Create(2048);
-    private readonly List<string> _onlineClients = [];
-    private RSA? _serverRsa;
+    private readonly ConcurrentDictionary<string, RSA> _peers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private string _myPublicKeyBase64 = "";
+    private StreamWriter? _writer;
 
     public async Task RunAsync(CancellationToken ct)
     {
@@ -29,24 +32,10 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         var stream = tcpClient.GetStream();
         using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
         using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
+        _writer = writer;
 
-        var pubKey = Convert.ToBase64String(_clientRsa.ExportSubjectPublicKeyInfo());
-        await writer.WriteLineAsync(ProtocolSerializer.Serialize(new ConnectMessage(nickname, pubKey)));
-
-        var line = await reader.ReadLineAsync(ct);
-        if (line is null) { Console.Error.WriteLine("Server closed connection."); return; }
-
-        if (ProtocolSerializer.Deserialize(line) is KeyExchangeMessage kex)
-        {
-            _serverRsa = RSA.Create();
-            _serverRsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(kex.ServerPublicKey), out _);
-        }
-        else
-        {
-            // Error before keyexchange (e.g. NICKNAME_TAKEN) — UI not yet active
-            PrintPreUiMessage(ProtocolSerializer.Deserialize(line));
-            return;
-        }
+        _myPublicKeyBase64 = Convert.ToBase64String(_clientRsa.ExportSubjectPublicKeyInfo());
+        await SendAsync(new ConnectMessage(nickname, _myPublicKeyBase64));
 
         ui.Initialize();
         ui.AddMessage($"connected as [{nickname}] — ctrl+c to quit", ConsoleColor.DarkGray);
@@ -54,7 +43,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         var receiveTask = ReceiveLoopAsync(reader, linkedCts.Token);
-        var sendTask    = SendLoopAsync(writer, linkedCts.Token);
+        var sendTask    = SendLoopAsync(linkedCts.Token);
 
         await Task.WhenAny(receiveTask, sendTask);
         await linkedCts.CancelAsync();
@@ -63,7 +52,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         catch (OperationCanceledException) { }
 
         ui.AddMessage("disconnected.", ConsoleColor.DarkGray);
-        await Task.Delay(800, CancellationToken.None); // let the user read the message
+        await Task.Delay(800, CancellationToken.None);
     }
 
     private async Task ReceiveLoopAsync(StreamReader reader, CancellationToken ct)
@@ -75,15 +64,18 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
                 var line = await reader.ReadLineAsync(ct);
                 if (line is null) break;
 
-                try { HandleMessage(ProtocolSerializer.Deserialize(line)); }
-                catch { }
+                BaseMessage? msg;
+                try { msg = ProtocolSerializer.Deserialize(line); }
+                catch { continue; }
+
+                await HandleMessageAsync(msg);
             }
         }
         catch (OperationCanceledException) { }
         catch (IOException) { }
     }
 
-    private async Task SendLoopAsync(StreamWriter writer, CancellationToken ct)
+    private async Task SendLoopAsync(CancellationToken ct)
     {
         try
         {
@@ -93,10 +85,16 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
                 if (text is null) break;
                 if (string.IsNullOrWhiteSpace(text)) continue;
 
-                var msg = Encrypt(text);
-                await writer.WriteLineAsync(ProtocolSerializer.Serialize(msg));
+                var ts = DateTime.UtcNow.ToString("O");
+                var plaintextBytes = Encoding.UTF8.GetBytes(text);
 
-                var time = DateTime.Now.ToString("HH:mm");
+                foreach (var (peerNick, peerKey) in _peers.ToArray())
+                {
+                    var msg = EncryptForPeer(peerNick, peerKey, plaintextBytes, ts);
+                    await SendAsync(msg);
+                }
+
+                var time = DateTime.Parse(ts).ToLocalTime().ToString("HH:mm");
                 ui.AddMessage($"[{time}] <{nickname}> {text}", ConsoleColor.DarkCyan);
             }
         }
@@ -104,27 +102,42 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         catch (IOException) { }
     }
 
-    private void HandleMessage(BaseMessage? msg)
+    private async Task HandleMessageAsync(BaseMessage? msg)
     {
-        if (msg is null) return;
-
         switch (msg)
         {
-            case BroadcastMessage bcast:
-                var text = Decrypt(bcast);
-                var time = DateTime.Parse(bcast.Timestamp).ToLocalTime().ToString("HH:mm");
-                ui.AddMessage($"[{time}] <{bcast.Nickname}> {text}", ConsoleColor.White);
+            case PeerJoinedMessage joined:
+                if (AddPeer(joined.Nickname, joined.PublicKey))
+                    ui.AddMessage($"*** {joined.Nickname} joined", ConsoleColor.Yellow);
+                // Reply with our own peerhello so the newcomer learns about us.
+                await SendAsync(new PeerHelloMessage(
+                    To:        joined.Nickname,
+                    From:      null,
+                    Nickname:  nickname,
+                    PublicKey: _myPublicKeyBase64));
                 break;
 
-            case ClientListMessage clientList:
-                _onlineClients.Clear();
-                _onlineClients.AddRange(clientList.Nicknames);
-                ui.SetClients(_onlineClients);
+            case PeerHelloMessage hello:
+                if (AddPeer(hello.Nickname, hello.PublicKey))
+                    ui.AddMessage($"*** {hello.Nickname} joined", ConsoleColor.Yellow);
                 break;
 
-            case SystemMessage sys:
-                ui.AddMessage($"*** {sys.Text}", ConsoleColor.Yellow);
-                UpdateClientList(sys.Text);
+            case PeerLeftMessage left:
+                if (_peers.TryRemove(left.Nickname, out var rsa))
+                {
+                    rsa.Dispose();
+                    ui.SetClients(GetRosterForUi());
+                    ui.AddMessage($"*** {left.Nickname} left", ConsoleColor.Yellow);
+                }
+                break;
+
+            case ChatMessage chat:
+                if (chat.From is null) break;
+                string text;
+                try { text = Decrypt(chat); }
+                catch { break; }
+                var time = DateTime.Parse(chat.Timestamp).ToLocalTime().ToString("HH:mm");
+                ui.AddMessage($"[{time}] <{chat.From}> {text}", ConsoleColor.White);
                 break;
 
             case ErrorMessage err:
@@ -133,68 +146,98 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         }
     }
 
-    private void UpdateClientList(string text)
+    private bool AddPeer(string nick, string publicKeyBase64)
     {
-        const string joined = " has joined the chat.";
-        const string left   = " has left the chat.";
-
-        if (text.EndsWith(joined))
+        RSA rsa;
+        try
         {
-            var nick = text[..^joined.Length];
-            if (!_onlineClients.Contains(nick, StringComparer.OrdinalIgnoreCase))
-                _onlineClients.Add(nick);
+            rsa = RSA.Create();
+            rsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(publicKeyBase64), out _);
         }
-        else if (text.EndsWith(left))
+        catch
         {
-            var nick = text[..^left.Length];
-            _onlineClients.RemoveAll(n => string.Equals(n, nick, StringComparison.OrdinalIgnoreCase));
+            return false;
         }
 
-        ui.SetClients(_onlineClients);
+        if (_peers.TryAdd(nick, rsa))
+        {
+            ui.SetClients(GetRosterForUi());
+            return true;
+        }
+
+        rsa.Dispose();
+        return false;
     }
 
-    private EncryptedMessage Encrypt(string text)
+    private List<string> GetRosterForUi()
     {
-        var plaintextBytes = Encoding.UTF8.GetBytes(text);
-        var aesKey    = RandomNumberGenerator.GetBytes(32);
-        var iv        = RandomNumberGenerator.GetBytes(12);
-        var ciphertext = new byte[plaintextBytes.Length];
-        var tag       = new byte[16];
+        var list = _peers.Keys.ToList();
+        list.Sort(StringComparer.OrdinalIgnoreCase);
+        return list;
+    }
+
+    private async Task SendAsync(BaseMessage msg)
+    {
+        if (_writer is null) return;
+        var line = ProtocolSerializer.Serialize(msg);
+
+        try { await _writeLock.WaitAsync(); }
+        catch (ObjectDisposedException) { return; }
+
+        try
+        {
+            await _writer.WriteLineAsync(line);
+        }
+        catch (IOException) { }
+        catch (ObjectDisposedException) { }
+        finally
+        {
+            try { _writeLock.Release(); }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    private static ChatMessage EncryptForPeer(string peerNick, RSA peerKey, byte[] plaintext, string timestamp)
+    {
+        var aesKey     = RandomNumberGenerator.GetBytes(32);
+        var iv         = RandomNumberGenerator.GetBytes(12);
+        var ciphertext = new byte[plaintext.Length];
+        var tag        = new byte[16];
 
         using var aesGcm = new AesGcm(aesKey, 16);
-        aesGcm.Encrypt(iv, plaintextBytes, ciphertext, tag);
+        aesGcm.Encrypt(iv, plaintext, ciphertext, tag);
 
-        var encryptedKey = _serverRsa!.Encrypt(aesKey, RSAEncryptionPadding.OaepSHA256);
+        var encryptedKey = peerKey.Encrypt(aesKey, RSAEncryptionPadding.OaepSHA256);
 
-        return new EncryptedMessage(
-            Convert.ToBase64String(encryptedKey),
-            Convert.ToBase64String(iv),
-            Convert.ToBase64String(ciphertext),
-            Convert.ToBase64String(tag));
+        return new ChatMessage(
+            To:           peerNick,
+            From:         null,
+            Timestamp:    timestamp,
+            EncryptedKey: Convert.ToBase64String(encryptedKey),
+            Iv:           Convert.ToBase64String(iv),
+            Ciphertext:   Convert.ToBase64String(ciphertext),
+            Tag:          Convert.ToBase64String(tag));
     }
 
-    private string Decrypt(BroadcastMessage msg)
+    private string Decrypt(ChatMessage msg)
     {
-        var aesKey    = _clientRsa.Decrypt(Convert.FromBase64String(msg.EncryptedKey), RSAEncryptionPadding.OaepSHA256);
-        var iv        = Convert.FromBase64String(msg.Iv);
+        var aesKey     = _clientRsa.Decrypt(Convert.FromBase64String(msg.EncryptedKey), RSAEncryptionPadding.OaepSHA256);
+        var iv         = Convert.FromBase64String(msg.Iv);
         var ciphertext = Convert.FromBase64String(msg.Ciphertext);
-        var tag       = Convert.FromBase64String(msg.Tag);
-        var plaintext = new byte[ciphertext.Length];
+        var tag        = Convert.FromBase64String(msg.Tag);
+        var plaintext  = new byte[ciphertext.Length];
 
         using var aesGcm = new AesGcm(aesKey, 16);
         aesGcm.Decrypt(iv, ciphertext, tag, plaintext);
         return Encoding.UTF8.GetString(plaintext);
     }
 
-    private static void PrintPreUiMessage(BaseMessage? msg)
-    {
-        if (msg is ErrorMessage err)
-            Console.Error.WriteLine($"error {err.Code}: {err.Text}");
-    }
-
     public void Dispose()
     {
         _clientRsa.Dispose();
-        _serverRsa?.Dispose();
+        foreach (var (_, rsa) in _peers)
+            rsa.Dispose();
+        _peers.Clear();
+        _writeLock.Dispose();
     }
 }

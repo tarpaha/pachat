@@ -1,5 +1,4 @@
 using System.Net.Sockets;
-using System.Security.Cryptography;
 using System.Text;
 using PaChat.Protocol;
 
@@ -8,10 +7,10 @@ namespace PaChat.Server;
 internal sealed class ClientConnection(TcpClient tcpClient, ChatServer server)
 {
     public string? Nickname { get; private set; }
-    public RSA? ClientRsa { get; private set; }
 
     private readonly StreamReader _reader = new(tcpClient.GetStream(), Encoding.UTF8, leaveOpen: true);
     private readonly StreamWriter _writer = new(tcpClient.GetStream(), Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
 
     public async Task HandleAsync(CancellationToken ct)
     {
@@ -45,23 +44,7 @@ internal sealed class ClientConnection(TcpClient tcpClient, ChatServer server)
                 return;
             }
 
-            // Import client RSA public key
-            try
-            {
-                var rsa = RSA.Create();
-                rsa.ImportSubjectPublicKeyInfo(Convert.FromBase64String(connect.PublicKey), out _);
-                ClientRsa = rsa;
-            }
-            catch
-            {
-                await SendAsync(new ErrorMessage("INVALID_KEY", "Could not import RSA public key."));
-                return;
-            }
-
-            // Step 2: send server public key
-            await SendAsync(new KeyExchangeMessage(server.ServerPublicKeyBase64));
-
-            // Step 3: register nickname
+            // Register nickname
             if (!server.TryRegisterClient(nick, this))
             {
                 await SendAsync(new ErrorMessage("NICKNAME_TAKEN", $"The nickname '{nick}' is already in use."));
@@ -69,11 +52,11 @@ internal sealed class ClientConnection(TcpClient tcpClient, ChatServer server)
             }
             Nickname = nick;
 
-            // Step 4: send current client list to the new client, then broadcast join
-            await SendAsync(new ClientListMessage(server.GetClientNicknames()));
-            await server.BroadcastSystemAsync($"{Nickname} has joined the chat.");
+            // Announce the new peer to all existing clients. They will respond with their own
+            // peerhello directly to the newcomer; the server is no longer involved in key exchange.
+            await server.BroadcastAsync(new PeerJoinedMessage(nick, connect.PublicKey), exclude: this);
 
-            // Step 5: message loop
+            // Message loop — server is a pure relay from here on.
             while (!ct.IsCancellationRequested)
             {
                 line = await _reader.ReadLineAsync(ct);
@@ -83,19 +66,15 @@ internal sealed class ClientConnection(TcpClient tcpClient, ChatServer server)
                 try { msg = ProtocolSerializer.Deserialize(line); }
                 catch { await SendAsync(new ErrorMessage("PROTOCOL_ERROR", "Malformed JSON.")); continue; }
 
-                if (msg is EncryptedMessage encrypted)
+                switch (msg)
                 {
-                    string plaintext;
-                    try { plaintext = server.Decrypt(encrypted); }
-                    catch { await SendAsync(new ErrorMessage("PROTOCOL_ERROR", "Decryption failed.")); continue; }
-
-                    if (plaintext.Length > 2000)
-                    {
-                        await SendAsync(new ErrorMessage("MESSAGE_TOO_LONG", "Message exceeds 2000 characters."));
-                        continue;
-                    }
-
-                    await server.BroadcastEncryptedAsync(Nickname, plaintext, exclude: this);
+                    case PeerHelloMessage:
+                    case ChatMessage:
+                        await server.RouteAsync(Nickname, msg);
+                        break;
+                    default:
+                        await SendAsync(new ErrorMessage("PROTOCOL_ERROR", "Unexpected message type."));
+                        break;
                 }
             }
         }
@@ -106,22 +85,34 @@ internal sealed class ClientConnection(TcpClient tcpClient, ChatServer server)
             if (Nickname is not null)
             {
                 server.UnregisterClient(Nickname);
-                _ = server.BroadcastSystemAsync($"{Nickname} has left the chat.");
+                _ = server.BroadcastAsync(new PeerLeftMessage(Nickname));
             }
-            ClientRsa?.Dispose();
             _reader.Dispose();
             _writer.Dispose();
             tcpClient.Dispose();
+            _writeLock.Dispose();
         }
     }
 
     public async Task SendAsync(BaseMessage message)
     {
+        var line = ProtocolSerializer.Serialize(message);
         try
         {
-            await _writer.WriteLineAsync(ProtocolSerializer.Serialize(message));
+            await _writeLock.WaitAsync();
+        }
+        catch (ObjectDisposedException) { return; }
+
+        try
+        {
+            await _writer.WriteLineAsync(line);
         }
         catch (IOException) { }
         catch (ObjectDisposedException) { }
+        finally
+        {
+            try { _writeLock.Release(); }
+            catch (ObjectDisposedException) { }
+        }
     }
 }
