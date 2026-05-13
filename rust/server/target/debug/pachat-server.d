@@ -1,1 +1,0 @@
-C:\code\pachat\rust\server\target\debug\pachat-server.exe: C:\code\pachat\rust\server\src\connection.rs C:\code\pachat\rust\server\src\main.rs C:\code\pachat\rust\server\src\protocol.rs C:\code\pachat\rust\server\src\server.rs
