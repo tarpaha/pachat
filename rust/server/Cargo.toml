@@ -1,0 +1,15 @@
+[package]
+name = "pachat-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pachat-server"
+path = "src/main.rs"
+
+[dependencies]
+tokio      = { version = "1", features = ["full"] }
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap       = { version = "4", features = ["derive"] }
+tokio-util = "0.7"
