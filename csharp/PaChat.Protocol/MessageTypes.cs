@@ -17,44 +17,28 @@ public interface IRoutable
     BaseMessage WithFrom(string senderNick);
 }
 
-public sealed record ConnectMessage(
-    [property: JsonPropertyName("nickname")]  string Nickname,
-    [property: JsonPropertyName("publicKey")] string PublicKey)
+public sealed record ConnectMessage(string Nickname, string Publickey)
     : BaseMessage;
 
-public sealed record PeerJoinedMessage(
-    [property: JsonPropertyName("nickname")]  string Nickname,
-    [property: JsonPropertyName("publicKey")] string PublicKey)
+public sealed record PeerJoinedMessage(string Nickname, string Publickey)
     : BaseMessage;
 
-public sealed record PeerLeftMessage(
-    [property: JsonPropertyName("nickname")] string Nickname)
+public sealed record PeerLeftMessage(string Nickname)
     : BaseMessage;
 
 public sealed record PeerHelloMessage(
-    [property: JsonPropertyName("to")]        string? To,
-    [property: JsonPropertyName("from")]      string? From,
-    [property: JsonPropertyName("nickname")]  string Nickname,
-    [property: JsonPropertyName("publicKey")] string PublicKey)
+    string? To, string? From, string Nickname, string Publickey)
     : BaseMessage, IRoutable
 {
     public BaseMessage WithFrom(string senderNick) => this with { To = null, From = senderNick };
 }
 
 public sealed record ChatMessage(
-    [property: JsonPropertyName("to")]           string? To,
-    [property: JsonPropertyName("from")]         string? From,
-    [property: JsonPropertyName("timestamp")]    string Timestamp,
-    [property: JsonPropertyName("encryptedKey")] string EncryptedKey,
-    [property: JsonPropertyName("iv")]           string Iv,
-    [property: JsonPropertyName("ciphertext")]   string Ciphertext,
-    [property: JsonPropertyName("tag")]          string Tag)
-    : BaseMessage, IRoutable
+    string? To, string? From, string Timestamp, string Encryptedkey,
+    string Iv, string Ciphertext, string Tag) : BaseMessage, IRoutable
 {
     public BaseMessage WithFrom(string senderNick) => this with { To = null, From = senderNick };
 }
 
-public sealed record ErrorMessage(
-    [property: JsonPropertyName("code")] string Code,
-    [property: JsonPropertyName("text")] string Text)
+public sealed record ErrorMessage(string Code, string Text)
     : BaseMessage;

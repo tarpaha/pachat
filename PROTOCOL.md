@@ -13,7 +13,7 @@ JSON envelopes by nickname. All confidentiality is between peers.
 - On `connect`, the client publishes its nickname and public key. The server forwards them to all
   other connected clients in a `peerjoined` broadcast.
 - Existing clients respond to a `peerjoined` by sending a directed `peerhello` to the newcomer
-  carrying their own (nickname, publicKey). After this, every client has every other client's
+  carrying their own (nickname, publickey). After this, every client has every other client's
   public key in its local roster.
 - Chat messages are encrypted **per recipient**: the sender produces one `chat` envelope per peer,
   each addressed (`to`) to a specific nickname and encrypted under that peer's RSA public key.
@@ -25,22 +25,22 @@ Hybrid encryption per envelope (unchanged from v1, but now keyed per peer):
 - AES-256-GCM encrypts the payload (12-byte nonce, 16-byte tag).
 
 Public keys are DER-encoded SubjectPublicKeyInfo (SPKI), base64-encoded. Encrypted fields
-(`encryptedKey`, `iv`, `ciphertext`, `tag`) are base64-encoded bytes.
+(`encryptedkey`, `iv`, `ciphertext`, `tag`) are base64-encoded bytes.
 
 ## Message Types
 
 ### `connect` (C→S)
 Sent exactly once, immediately after TCP connection.
 ```json
-{"type":"connect","nickname":"alice","publicKey":"<base64 DER SPKI>"}
+{"type":"connect","nickname":"alice","publickey":"<base64 DER SPKI>"}
 ```
 - `nickname`: 1–32 chars, no leading/trailing whitespace.
-- `publicKey`: client's RSA-2048 public key, DER SPKI, base64.
+- `publickey`: client's RSA-2048 public key, DER SPKI, base64.
 
 ### `peerjoined` (S→C)
 Server broadcast when a new client successfully registers. Sent to every other connected client.
 ```json
-{"type":"peerjoined","nickname":"alice","publicKey":"<base64 DER SPKI>"}
+{"type":"peerjoined","nickname":"alice","publickey":"<base64 DER SPKI>"}
 ```
 
 ### `peerleft` (S→C)
@@ -53,11 +53,11 @@ Server broadcast when a client disconnects.
 Directed key announcement, sent by an existing peer in response to a `peerjoined`.
 - Client→server form (sent by the announcer):
   ```json
-  {"type":"peerhello","to":"alice","nickname":"bob","publicKey":"<base64 DER SPKI>"}
+  {"type":"peerhello","to":"alice","nickname":"bob","publickey":"<base64 DER SPKI>"}
   ```
 - Server→client form (delivered to the addressee):
   ```json
-  {"type":"peerhello","from":"bob","nickname":"bob","publicKey":"<base64 DER SPKI>"}
+  {"type":"peerhello","from":"bob","nickname":"bob","publickey":"<base64 DER SPKI>"}
   ```
 The server replaces `to` with `from` (= the sending client's registered nickname) before forwarding.
 A receiver can verify `from == nickname` and reject otherwise.
@@ -67,15 +67,15 @@ End-to-end encrypted chat envelope, sent by the author once per intended recipie
 - Client→server form:
   ```json
   {"type":"chat","to":"bob","timestamp":"2026-05-10T14:32:00.0000000Z",
-   "encryptedKey":"<base64>","iv":"<base64>","ciphertext":"<base64>","tag":"<base64>"}
+   "encryptedkey":"<base64>","iv":"<base64>","ciphertext":"<base64>","tag":"<base64>"}
   ```
 - Server→client form (delivered to the addressee):
   ```json
   {"type":"chat","from":"alice","timestamp":"2026-05-10T14:32:00.0000000Z",
-   "encryptedKey":"<base64>","iv":"<base64>","ciphertext":"<base64>","tag":"<base64>"}
+   "encryptedkey":"<base64>","iv":"<base64>","ciphertext":"<base64>","tag":"<base64>"}
   ```
 - `timestamp`: ISO 8601 UTC, set by the **sender** (the server is no longer a time authority).
-- `encryptedKey`: AES-256 key encrypted with the recipient's RSA public key (OAEP-SHA256).
+- `encryptedkey`: AES-256 key encrypted with the recipient's RSA public key (OAEP-SHA256).
 - `iv`: 12-byte GCM nonce.
 - `ciphertext`: AES-256-GCM encrypted UTF-8 plaintext.
 - `tag`: 16-byte GCM authentication tag.

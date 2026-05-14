@@ -53,9 +53,7 @@ pub async fn handle(stream: TcpStream, server: Arc<ChatServer>, token: Cancellat
             }
         };
 
-        let first_line = first_line.trim_start_matches('\u{feff}');
-
-        match protocol::deserialize(first_line) {
+        match protocol::deserialize(&first_line) {
             Err(_) => {
                 send(
                     &Message::Error {
@@ -69,7 +67,7 @@ pub async fn handle(stream: TcpStream, server: Arc<ChatServer>, token: Cancellat
             }
             Ok(Message::Connect {
                 nickname,
-                public_key,
+                publickey,
             }) => {
                 let nick = nickname.trim().to_string();
                 if nick.is_empty() || nick.len() > 32 {
@@ -99,7 +97,7 @@ pub async fn handle(stream: TcpStream, server: Arc<ChatServer>, token: Cancellat
                     .broadcast(
                         &Message::PeerJoined {
                             nickname: nick.clone(),
-                            public_key,
+                            publickey,
                         },
                         Some(&nick),
                     )

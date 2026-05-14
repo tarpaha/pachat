@@ -9,7 +9,7 @@ internal sealed class ClientConnection(TcpClient tcpClient, ChatServer server)
     public string? Nickname { get; private set; }
 
     private readonly StreamReader _reader = new(tcpClient.GetStream(), Encoding.UTF8, leaveOpen: true);
-    private readonly StreamWriter _writer = new(tcpClient.GetStream(), Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
+    private readonly StreamWriter _writer = new(tcpClient.GetStream(), new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
     public async Task HandleAsync(CancellationToken ct)
@@ -54,7 +54,7 @@ internal sealed class ClientConnection(TcpClient tcpClient, ChatServer server)
 
             // Announce the new peer to all existing clients. They will respond with their own
             // peerhello directly to the newcomer; the server is no longer involved in key exchange.
-            await server.BroadcastAsync(new PeerJoinedMessage(nick, connect.PublicKey), exclude: this);
+            await server.BroadcastAsync(new PeerJoinedMessage(nick, connect.Publickey), exclude: this);
 
             // Message loop — server is a pure relay from here on.
             while (!ct.IsCancellationRequested)

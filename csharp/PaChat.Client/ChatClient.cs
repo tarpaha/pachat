@@ -31,7 +31,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
 
         var stream = tcpClient.GetStream();
         using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
-        using var writer = new StreamWriter(stream, Encoding.UTF8, leaveOpen: true) { AutoFlush = true };
+        using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
         _writer = writer;
 
         _myPublicKeyBase64 = Convert.ToBase64String(_clientRsa.ExportSubjectPublicKeyInfo());
@@ -108,18 +108,18 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
         switch (msg)
         {
             case PeerJoinedMessage joined:
-                if (AddPeer(joined.Nickname, joined.PublicKey))
+                if (AddPeer(joined.Nickname, joined.Publickey))
                     ui.AddMessage($"*** {joined.Nickname} joined", ConsoleColor.Yellow);
                 // Reply with our own peerhello so the newcomer learns about us.
                 await SendAsync(new PeerHelloMessage(
                     To:        joined.Nickname,
                     From:      null,
                     Nickname:  nickname,
-                    PublicKey: _myPublicKeyBase64), ct);
+                    Publickey: _myPublicKeyBase64), ct);
                 break;
 
             case PeerHelloMessage hello:
-                if (AddPeer(hello.Nickname, hello.PublicKey))
+                if (AddPeer(hello.Nickname, hello.Publickey))
                     ui.AddMessage($"*** {hello.Nickname} joined", ConsoleColor.Yellow);
                 break;
 
@@ -217,7 +217,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
             To:           peerNick,
             From:         null,
             Timestamp:    timestamp,
-            EncryptedKey: Convert.ToBase64String(encryptedKey),
+            Encryptedkey: Convert.ToBase64String(encryptedKey),
             Iv:           Convert.ToBase64String(iv),
             Ciphertext:   Convert.ToBase64String(ciphertext),
             Tag:          Convert.ToBase64String(tag));
@@ -225,7 +225,7 @@ internal sealed class ChatClient(string host, int port, string nickname, IUserIn
 
     private string Decrypt(ChatMessage msg)
     {
-        var aesKey     = _clientRsa.Decrypt(Convert.FromBase64String(msg.EncryptedKey), RSAEncryptionPadding.OaepSHA256);
+        var aesKey     = _clientRsa.Decrypt(Convert.FromBase64String(msg.Encryptedkey), RSAEncryptionPadding.OaepSHA256);
         var iv         = Convert.FromBase64String(msg.Iv);
         var ciphertext = Convert.FromBase64String(msg.Ciphertext);
         var tag        = Convert.FromBase64String(msg.Tag);
