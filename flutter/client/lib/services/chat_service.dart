@@ -33,6 +33,12 @@ class ChatService {
   Stream<ChatEvent> get events => _events.stream;
   bool get isDisconnected => _disconnected;
 
+  List<String> get roster {
+    final list = <String>[..._peers.keys, nickname];
+    list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return list;
+  }
+
   static Future<ChatService> connectAndRegister({
     required String host,
     required int port,

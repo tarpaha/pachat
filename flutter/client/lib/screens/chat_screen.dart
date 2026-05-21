@@ -20,10 +20,12 @@ class _ChatScreenState extends State<ChatScreen> {
   final FocusNode _inputFocus = FocusNode();
   StreamSubscription<ChatEvent>? _sub;
   bool _disconnected = false;
+  List<String> _roster = const [];
 
   @override
   void initState() {
     super.initState();
+    _roster = widget.service.roster;
     _sub = widget.service.events.listen(_onEvent);
   }
 
@@ -31,6 +33,9 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       _events.add(ev);
       if (ev is DisconnectedEvent) _disconnected = true;
+      if (ev is PeerJoinedEvent || ev is PeerLeftEvent) {
+        _roster = widget.service.roster;
+      }
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
@@ -78,28 +83,31 @@ class _ChatScreenState extends State<ChatScreen> {
         await _exit();
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: Text('PaChat — ${widget.service.nickname}'),
-          actions: [
-            IconButton(
-              tooltip: 'Exit',
-              icon: const Icon(Icons.logout),
-              onPressed: _exit,
-            ),
-          ],
-        ),
+        appBar: AppBar(title: Text('PaChat — ${widget.service.nickname}')),
         body: SafeArea(
           child: Column(
             children: [
               Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  itemCount: _events.length,
-                  itemBuilder: (_, i) => _EventTile(event: _events[i]),
+                child: Stack(
+                  children: [
+                    ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      itemCount: _events.length,
+                      itemBuilder: (_, i) => _EventTile(event: _events[i]),
+                    ),
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: _RosterPanel(
+                        roster: _roster,
+                        self: widget.service.nickname,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               if (_disconnected)
@@ -200,6 +208,58 @@ class _EventTile extends StatelessWidget {
       case DisconnectedEvent(:final reason):
         return _SystemLine('*** disconnected ($reason)', Colors.redAccent);
     }
+  }
+}
+
+class _RosterPanel extends StatelessWidget {
+  final List<String> roster;
+  final String self;
+  const _RosterPanel({required this.roster, required this.self});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: 160,
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.blueAccent.withValues(alpha: 0.7)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Online (${roster.length})',
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Divider(color: Colors.blueAccent, height: 1),
+            ),
+            for (final nick in roster)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  nick,
+                  style: TextStyle(
+                    color: nick.toLowerCase() == self.toLowerCase()
+                        ? Colors.cyanAccent
+                        : Colors.redAccent,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
