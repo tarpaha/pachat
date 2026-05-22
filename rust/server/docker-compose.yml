@@ -1,0 +1,8 @@
+services:
+  pachat-server:
+    build: .
+    image: pachat-server:latest
+    container_name: pachat-server
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
