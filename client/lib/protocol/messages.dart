@@ -1,146 +1,50 @@
-sealed class BaseMessage {
-  const BaseMessage();
+import 'dart:convert';
 
-  Map<String, dynamic> toJson();
+const maxLineBytes = 1024 * 1024;
 
-  static BaseMessage? fromJson(Map<String, dynamic> json) {
-    final type = json['type'];
-    if (type is! String) return null;
-    switch (type) {
-      case 'connect':
-        return ConnectMessage(
-          nickname: json['nickname'] as String,
-          publickey: json['publickey'] as String,
-        );
-      case 'peerjoined':
-        return PeerJoinedMessage(
-          nickname: json['nickname'] as String,
-          publickey: json['publickey'] as String,
-        );
-      case 'peerleft':
-        return PeerLeftMessage(nickname: json['nickname'] as String);
-      case 'peerhello':
-        return PeerHelloMessage(
-          to: json['to'] as String?,
-          from: json['from'] as String?,
-          nickname: json['nickname'] as String,
-          publickey: json['publickey'] as String,
-        );
-      case 'chat':
-        return ChatMessage(
-          to: json['to'] as String?,
-          from: json['from'] as String?,
-          timestamp: json['timestamp'] as String,
-          encryptedkey: json['encryptedkey'] as String,
-          iv: json['iv'] as String,
-          ciphertext: json['ciphertext'] as String,
-          tag: json['tag'] as String,
-        );
-      case 'error':
-        return ErrorMessage(
-          code: json['code'] as String,
-          text: json['text'] as String,
-        );
-      default:
-        return null;
+String encodePublish(String block) {
+  final line = '${jsonEncode({'type': 'publish', 'block': block})}\n';
+  if (utf8.encode(line).length > maxLineBytes - 64) {
+    throw const FormatException('Message block is too large');
+  }
+  return line;
+}
+
+class NewBlock {
+  final int id;
+  final String block;
+  const NewBlock(this.id, this.block);
+  factory NewBlock.decode(String line) {
+    final json = jsonDecode(line) as Map<String, dynamic>;
+    if (json['type'] != 'new_block' ||
+        json['id'] is! int ||
+        (json['id'] as int) < 1 ||
+        json['block'] is! String) {
+      throw const FormatException('Invalid new_block');
     }
+    return NewBlock(json['id'] as int, json['block'] as String);
   }
 }
 
-class ConnectMessage extends BaseMessage {
-  final String nickname;
-  final String publickey;
-  const ConnectMessage({required this.nickname, required this.publickey});
-
-  @override
-  Map<String, dynamic> toJson() => {
-    'type': 'connect',
-    'nickname': nickname,
-    'publickey': publickey,
-  };
-}
-
-class PeerJoinedMessage extends BaseMessage {
-  final String nickname;
-  final String publickey;
-  const PeerJoinedMessage({required this.nickname, required this.publickey});
-
-  @override
-  Map<String, dynamic> toJson() => {
-    'type': 'peerjoined',
-    'nickname': nickname,
-    'publickey': publickey,
-  };
-}
-
-class PeerLeftMessage extends BaseMessage {
-  final String nickname;
-  const PeerLeftMessage({required this.nickname});
-
-  @override
-  Map<String, dynamic> toJson() => {'type': 'peerleft', 'nickname': nickname};
-}
-
-class PeerHelloMessage extends BaseMessage {
-  final String? to;
-  final String? from;
-  final String nickname;
-  final String publickey;
-  const PeerHelloMessage({
-    this.to,
-    this.from,
-    required this.nickname,
-    required this.publickey,
-  });
-
-  @override
-  Map<String, dynamic> toJson() {
-    final m = <String, dynamic>{'type': 'peerhello'};
-    if (to != null) m['to'] = to;
-    if (from != null) m['from'] = from;
-    m['nickname'] = nickname;
-    m['publickey'] = publickey;
-    return m;
+Stream<String> boundedLines(Stream<List<int>> input) async* {
+  var pending = <int>[];
+  await for (final chunk in input) {
+    var start = 0;
+    for (var i = 0; i < chunk.length; i++) {
+      if (chunk[i] == 10) {
+        if (pending.length + i - start + 1 > maxLineBytes) {
+          throw const FormatException('Block too large');
+        }
+        pending.addAll(chunk.sublist(start, i));
+        yield utf8.decode(pending);
+        pending = <int>[];
+        start = i + 1;
+      }
+    }
+    if (pending.length + chunk.length - start >= maxLineBytes) {
+      throw const FormatException('Block too large');
+    }
+    pending.addAll(chunk.sublist(start));
   }
-}
-
-class ChatMessage extends BaseMessage {
-  final String? to;
-  final String? from;
-  final String timestamp;
-  final String encryptedkey;
-  final String iv;
-  final String ciphertext;
-  final String tag;
-  const ChatMessage({
-    this.to,
-    this.from,
-    required this.timestamp,
-    required this.encryptedkey,
-    required this.iv,
-    required this.ciphertext,
-    required this.tag,
-  });
-
-  @override
-  Map<String, dynamic> toJson() {
-    final m = <String, dynamic>{'type': 'chat'};
-    if (to != null) m['to'] = to;
-    if (from != null) m['from'] = from;
-    m['timestamp'] = timestamp;
-    m['encryptedkey'] = encryptedkey;
-    m['iv'] = iv;
-    m['ciphertext'] = ciphertext;
-    m['tag'] = tag;
-    return m;
-  }
-}
-
-class ErrorMessage extends BaseMessage {
-  final String code;
-  final String text;
-  const ErrorMessage({required this.code, required this.text});
-
-  @override
-  Map<String, dynamic> toJson() => {'type': 'error', 'code': code, 'text': text};
+  if (pending.isNotEmpty) throw const FormatException('Incomplete block');
 }

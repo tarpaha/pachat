@@ -5,8 +5,12 @@ import '../services/friends_repository.dart';
 import 'crypto_service.dart';
 
 String encryptBlock(String text, List<FriendKey> recipients) {
-  if (recipients.isEmpty)
+  if (recipients.length > 256 || utf8.encode(text).length > 16384) {
+    throw const FormatException('Maximum 256 recipients and 16 KiB of text');
+  }
+  if (recipients.isEmpty) {
     throw StateError('Add a received public key before sending');
+  }
   final plaintext = Uint8List.fromList(
     utf8.encode(
       jsonEncode({
@@ -44,7 +48,9 @@ DecodedBlock? decryptBlock(String block, List<FriendKey> friends) {
     final json =
         jsonDecode(utf8.decode(base64.decode(block))) as Map<String, dynamic>;
     if (json['version'] != 1) return null;
-    for (final copy in json['copies'] as List) {
+    final copies = json['copies'] as List;
+    if (copies.length > 256) return null;
+    for (final copy in copies) {
       for (final friend in friends) {
         if (friend.pair == null) continue;
         try {

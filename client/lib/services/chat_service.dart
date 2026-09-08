@@ -1,258 +1,184 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-
-import 'package:pointycastle/export.dart';
-
-import '../crypto/crypto_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../crypto/block_crypto.dart';
 import '../models/chat_event.dart';
 import '../protocol/messages.dart';
-import '../protocol/serializer.dart';
+import 'friends_repository.dart';
 
-class LoginException implements Exception {
-  final String code;
-  final String text;
-  const LoginException(this.code, this.text);
+class HistoryStorage implements PrivateStorage {
+  final String server;
+  const HistoryStorage(this.server);
+  String get key =>
+      'pachat.history.v1.${blockDigest(server).replaceAll('/', '_').replaceAll('+', '-')}';
+  static const _storage = FlutterSecureStorage();
   @override
-  String toString() => '$code: $text';
+  Future<String?> read() => _storage.read(key: key);
+  @override
+  Future<void> write(String value) => _storage.write(key: key, value: value);
 }
 
-class ChatService {
-  final String nickname;
-  final PaCrypto _crypto;
+String _encrypt((String, List<FriendKey>) args) =>
+    encryptBlock(args.$1, args.$2);
+DecodedBlock? _decrypt((String, List<FriendKey>) args) =>
+    decryptBlock(args.$1, args.$2);
+
+class ChatService extends ChangeNotifier {
+  final FriendsRepository friends;
+  final PrivateStorage historyStorage;
   final Socket _socket;
-  final Map<String, RSAPublicKey> _peers = {};
-  final StreamController<ChatEvent> _events =
-      StreamController<ChatEvent>.broadcast();
-  StreamSubscription<String>? _sub;
+  List<ChatEntry> _entries;
+  Future<void> _work = Future.value();
+  late final Future<void> _receiving;
   bool _disconnected = false;
-
-  ChatService._(this.nickname, this._crypto, this._socket);
-
-  Stream<ChatEvent> get events => _events.stream;
+  bool _disposed = false;
+  String? error;
+  ChatService._(this.friends, this.historyStorage, this._socket, this._entries);
+  List<ChatEntry> get entries => List.unmodifiable(_entries);
   bool get isDisconnected => _disconnected;
 
-  List<String> get roster {
-    final list = <String>[..._peers.keys, nickname];
-    list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return list;
-  }
-
-  static Future<ChatService> connectAndRegister({
+  static Future<ChatService> connect({
     required String host,
     required int port,
-    required String nickname,
+    required FriendsRepository friends,
+    PrivateStorage? historyStorage,
   }) async {
-    final crypto = await PaCrypto.generate();
-
-    final Socket socket;
-    try {
-      socket = await Socket.connect(
-        host,
-        port,
-        timeout: const Duration(seconds: 5),
-      );
-    } on SocketException catch (e) {
-      throw LoginException(
-        'CONNECTION_FAILED',
-        e.message.isEmpty ? 'Cannot connect to $host:$port' : e.message,
-      );
-    } on TimeoutException {
-      throw LoginException(
-        'CONNECTION_TIMEOUT',
-        'Timed out connecting to $host:$port',
-      );
+    final storage = historyStorage ?? HistoryStorage('$host:$port');
+    final saved = await storage.read();
+    var entries = <ChatEntry>[];
+    if (saved != null) {
+      final data = jsonDecode(saved) as Map<String, dynamic>;
+      if (data['version'] != 1) {
+        throw const FormatException('Unsupported history version');
+      }
+      entries = (data['entries'] as List)
+          .map((e) => ChatEntry.fromJson(Map<String, dynamic>.from(e)))
+          .map((e) => e.status == 'pending' ? e.uncertain() : e)
+          .toList();
     }
-    socket.setOption(SocketOption.tcpNoDelay, true);
-
-    final svc = ChatService._(nickname, crypto, socket);
-
-    var loginDone = false;
-    final completer = Completer<void>();
-
-    svc._sub = socket
-        .cast<List<int>>()
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen(
-          (line) {
-            final msg = decodeLine(line);
-            if (msg == null) return;
-            if (!loginDone) {
-              if (msg is ErrorMessage) {
-                if (!completer.isCompleted) {
-                  completer.completeError(LoginException(msg.code, msg.text));
-                }
-                return;
-              }
-              loginDone = true;
-              if (!completer.isCompleted) completer.complete();
-            }
-            svc._handleMessage(msg);
-          },
-          onError: (Object err) {
-            if (!loginDone && !completer.isCompleted) {
-              completer.completeError(
-                LoginException('CONNECTION_ERROR', err.toString()),
-              );
-            }
-            svc._handleDisconnect('connection error');
-          },
-          onDone: () {
-            if (!loginDone && !completer.isCompleted) {
-              completer.completeError(
-                const LoginException(
-                  'CONNECTION_CLOSED',
-                  'Server closed the connection',
-                ),
-              );
-            }
-            svc._handleDisconnect('connection closed');
-          },
-        );
-
-    svc._sendRaw(
-      ConnectMessage(nickname: nickname, publickey: crypto.publicKeyBase64),
+    final socket = await Socket.connect(
+      host,
+      port,
+      timeout: const Duration(seconds: 5),
     );
-
-    try {
-      await completer.future.timeout(const Duration(milliseconds: 1500));
-    } on TimeoutException {
-      // No error within window — treat as success.
-    } on LoginException {
-      await svc._teardown();
-      rethrow;
-    }
-    loginDone = true;
-    return svc;
+    socket.setOption(SocketOption.tcpNoDelay, true);
+    final service = ChatService._(friends, storage, socket, entries);
+    service._receiving = service._receive();
+    return service;
   }
 
-  Future<void> sendChat(String text) async {
-    if (_disconnected) return;
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
 
-    final timestamp = DateTime.now().toUtc().toIso8601String();
-    final plaintext = Uint8List.fromList(utf8.encode(text));
+  Future<void> _serial(Future<void> Function() action) {
+    final next = _work.then((_) => action());
+    _work = next.catchError((Object _) {});
+    return next;
+  }
 
-    for (final entry in _peers.entries) {
-      final envelope = encryptForPeer(entry.value, plaintext);
-      _sendRaw(
-        ChatMessage(
-          to: entry.key,
-          timestamp: timestamp,
-          encryptedkey: base64.encode(envelope.encryptedKey),
-          iv: base64.encode(envelope.iv),
-          ciphertext: base64.encode(envelope.ciphertext),
-          tag: base64.encode(envelope.tag),
-        ),
-      );
-    }
-
-    _events.add(
-      ChatLineEvent(
-        from: nickname,
-        timestamp: DateTime.parse(timestamp),
-        text: text,
-        fromSelf: true,
-      ),
+  Future<void> _save(List<ChatEntry> next) async {
+    await historyStorage.write(
+      jsonEncode({
+        'version': 1,
+        'entries': next.map((e) => e.toJson()).toList(),
+      }),
     );
+    _entries = next;
+    _notify();
+  }
+
+  Future<void> sendChat(String text) => _serial(() async {
+    if (_disconnected) throw StateError('Disconnected');
+    if (text.trim().isEmpty) return;
+    final block = await compute(_encrypt, (text, friends.received));
+    final line = encodePublish(block);
+    if (_disconnected) throw StateError('Disconnected');
+    await _save([
+      ..._entries,
+      ChatEntry(
+        digest: blockDigest(block),
+        block: block,
+        text: text,
+        timestamp: DateTime.now(),
+        fromSelf: true,
+        status: 'pending',
+      ),
+    ]);
+    try {
+      _socket.add(utf8.encode(line));
+      await _socket.flush();
+    } catch (_) {
+      _socket.destroy();
+      rethrow;
+    }
+  });
+
+  Future<void> _receive() async {
+    try {
+      await for (final line in boundedLines(_socket)) {
+        final event = NewBlock.decode(line);
+        await _serial(() async {
+          final digest = blockDigest(event.block);
+          final index = _entries.indexWhere((e) => e.digest == digest);
+          if (index >= 0) {
+            if (_entries[index].fromSelf) {
+              final next = List<ChatEntry>.of(_entries);
+              next[index] = next[index].delivered(event.id);
+              await _save(next);
+            }
+            return;
+          }
+          final decoded = await compute(_decrypt, (
+            event.block,
+            friends.created,
+          ));
+          await _save([
+            ..._entries,
+            ChatEntry(
+              digest: digest,
+              block: event.block,
+              serverId: event.id,
+              friendKey: decoded?.friendKey,
+              text: decoded?.text,
+              timestamp: decoded?.timestamp ?? DateTime.now(),
+            ),
+          ]);
+        });
+      }
+    } catch (e) {
+      error = 'Receiving stopped: $e';
+    } finally {
+      _disconnected = true;
+      _socket.destroy();
+      try {
+        await _serial(
+          () => _save(
+            _entries
+                .map((e) => e.status == 'pending' ? e.uncertain() : e)
+                .toList(),
+          ),
+        );
+      } catch (e) {
+        error = 'Could not save history: $e';
+      }
+      _notify();
+    }
   }
 
   Future<void> disconnect() async {
-    await _teardown();
-  }
-
-  void _handleMessage(BaseMessage msg) {
-    switch (msg) {
-      case PeerJoinedMessage(:final nickname, :final publickey):
-        if (_addPeer(nickname, publickey)) {
-          _events.add(PeerJoinedEvent(nickname));
-        }
-        _sendRaw(
-          PeerHelloMessage(
-            to: nickname,
-            nickname: this.nickname,
-            publickey: _crypto.publicKeyBase64,
-          ),
-        );
-      case PeerHelloMessage(:final nickname, :final publickey):
-        if (_addPeer(nickname, publickey)) {
-          _events.add(PeerJoinedEvent(nickname));
-        }
-      case PeerLeftMessage(:final nickname):
-        if (_peers.remove(nickname) != null) {
-          _events.add(PeerLeftEvent(nickname));
-        }
-      case ChatMessage chat:
-        final from = chat.from;
-        if (from == null) return;
-        try {
-          final plain = decryptEnvelope(
-            _crypto.privateKey,
-            base64.decode(chat.encryptedkey),
-            base64.decode(chat.iv),
-            base64.decode(chat.ciphertext),
-            base64.decode(chat.tag),
-          );
-          final text = utf8.decode(plain);
-          _events.add(
-            ChatLineEvent(
-              from: from,
-              timestamp: DateTime.parse(chat.timestamp),
-              text: text,
-              fromSelf: false,
-            ),
-          );
-        } catch (_) {
-          // Ignore malformed/undecryptable chat envelopes.
-        }
-      case ErrorMessage(:final code, :final text):
-        _events.add(SystemErrorEvent(code, text));
-      case ConnectMessage():
-        // Should not arrive from server.
-        break;
-    }
-  }
-
-  bool _addPeer(String nick, String publicKeyBase64) {
-    if (_peers.containsKey(nick)) return false;
-    try {
-      final key = decodeRsaSpki(base64.decode(publicKeyBase64));
-      _peers[nick] = key;
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  void _sendRaw(BaseMessage msg) {
-    if (_disconnected) return;
-    try {
-      final line = encodeLine(msg);
-      _socket.add(utf8.encode('$line\n'));
-    } catch (_) {
-      // Socket errors surface via onError/onDone handlers.
-    }
-  }
-
-  void _handleDisconnect(String reason) {
-    if (_disconnected) return;
     _disconnected = true;
-    _events.add(DisconnectedEvent(reason));
+    _socket.destroy();
+    _notify();
+    await _receiving;
   }
 
-  Future<void> _teardown() async {
-    _handleDisconnect('client closed');
-    await _sub?.cancel();
-    _sub = null;
-    try {
-      await _socket.flush();
-    } catch (_) {}
-    try {
-      _socket.destroy();
-    } catch (_) {}
-    await _events.close();
+  @override
+  void dispose() {
+    _disposed = true;
+    _socket.destroy();
+    super.dispose();
   }
 }

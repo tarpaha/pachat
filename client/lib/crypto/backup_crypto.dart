@@ -17,8 +17,9 @@ Uint8List _derive(String password, Uint8List salt) {
 // Run these functions in a worker isolate: password derivation is intentionally costly.
 String encryptBackup((String, String) input) {
   final (json, password) = input;
-  if (password.length < 12)
+  if (password.length < 12) {
     throw const FormatException('Use a password of at least 12 characters');
+  }
   final salt = _random(16), nonce = _random(12);
   final cipher = GCMBlockCipher(AESEngine())
     ..init(
@@ -45,8 +46,9 @@ String decryptBackup((String, String) input) {
   if (json['version'] != 1) throw const FormatException('Unsupported backup');
   final salt = base64.decode(json['salt'] as String),
       nonce = base64.decode(json['nonce'] as String);
-  if (salt.length != 16 || nonce.length != 12)
+  if (salt.length != 16 || nonce.length != 12) {
     throw const FormatException('Invalid backup');
+  }
   final cipher = GCMBlockCipher(AESEngine())
     ..init(
       false,

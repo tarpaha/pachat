@@ -29,7 +29,7 @@ pub async fn handle(
             if count == 0 {
                 return Ok::<(), std::io::Error>(());
             }
-            if count > MAX_LINE_BYTES || line.last() != Some(&b'\n') {
+            if count > MAX_LINE_BYTES - 64 || line.last() != Some(&b'\n') {
                 break;
             }
             let Ok(Request::Publish { block }) = serde_json::from_slice(&line) else {

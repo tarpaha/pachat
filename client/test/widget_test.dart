@@ -1,11 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pachat_client/main.dart';
 
 void main() {
-  testWidgets('Login screen renders', (WidgetTester tester) async {
+  testWidgets('Connect screen loads without nickname or presence', (
+    tester,
+  ) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(const PaChatApp());
-    expect(find.text('PaChat — Login'), findsOneWidget);
-    expect(find.text('Enter'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('PaChat — Connect'), findsOneWidget);
+    expect(find.text('Connect'), findsOneWidget);
+    expect(find.text('Nickname'), findsNothing);
   });
 }

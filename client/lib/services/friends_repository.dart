@@ -68,13 +68,15 @@ class FriendsRepository extends ChangeNotifier {
 
   static List<FriendKey> decode(String value) {
     final json = jsonDecode(value) as Map<String, dynamic>;
-    if (json['version'] != 1)
+    if (json['version'] != 1) {
       throw const FormatException('Unsupported friends version');
+    }
     final entries = (json['friends'] as List)
         .map((e) => FriendKey.fromJson(Map<String, dynamic>.from(e)))
         .toList();
-    if (entries.map((e) => e.id).toSet().length != entries.length)
+    if (entries.map((e) => e.id).toSet().length != entries.length) {
       throw const FormatException('Duplicate keys');
+    }
     return entries;
   }
 
@@ -111,8 +113,9 @@ class FriendsRepository extends ChangeNotifier {
     if (name.trim().isEmpty) throw const FormatException('Enter a name');
     final key = validatePublicKey(value);
     await _change((items) {
-      if (items.any((e) => e.id == key))
+      if (items.any((e) => e.id == key)) {
         throw const FormatException('Key already exists');
+      }
       return [...items, FriendKey(name.trim(), key)];
     });
   }
