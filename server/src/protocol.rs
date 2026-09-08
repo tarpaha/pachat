@@ -1,109 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum Message {
-    Connect {
-        nickname: String,
-        publickey: String,
-    },
-    PeerJoined {
-        nickname: String,
-        publickey: String,
-    },
-    PeerLeft {
-        nickname: String,
-    },
-    PeerHello {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        to: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<String>,
-        nickname: String,
-        publickey: String,
-    },
-    Chat {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        to: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        from: Option<String>,
-        timestamp: String,
-        encryptedkey: String,
-        iv: String,
-        ciphertext: String,
-        tag: String,
-    },
-    Error {
-        code: String,
-        text: String,
-    },
+pub const MAX_LINE_BYTES: usize = 1024 * 1024;
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Request {
+    Publish { block: String },
 }
 
-impl Message {
-    pub fn to_field(&self) -> Option<&str> {
-        match self {
-            Message::PeerHello { to, .. } => to.as_deref(),
-            Message::Chat { to, .. } => to.as_deref(),
-            _ => None,
-        }
-    }
-
-    pub fn with_from(self, sender: String) -> Self {
-        match self {
-            Message::PeerHello { nickname, publickey, .. } => Message::PeerHello {
-                to: None,
-                from: Some(sender),
-                nickname,
-                publickey,
-            },
-            Message::Chat { timestamp, encryptedkey, iv, ciphertext, tag, .. } => Message::Chat {
-                to: None,
-                from: Some(sender),
-                timestamp,
-                encryptedkey,
-                iv,
-                ciphertext,
-                tag,
-            },
-            other => other,
-        }
-    }
-}
-
-pub fn serialize(msg: &Message) -> String {
-    serde_json::to_string(msg).unwrap_or_default()
-}
-
-pub fn deserialize(line: &str) -> serde_json::Result<Message> {
-    serde_json::from_str(line)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn round_trip_connect() {
-        let original = r#"{"type":"connect","nickname":"alice","publickey":"AAAA=="}"#;
-        let msg = deserialize(original).expect("parse failed");
-        assert_eq!(serialize(&msg), original);
-    }
-
-    #[test]
-    fn round_trip_peerhello() {
-        let s = r#"{"type":"peerhello","to":"bob","nickname":"alice","publickey":"AAAA=="}"#;
-        let msg = deserialize(s).unwrap();
-        assert_eq!(serialize(&msg), s);
-    }
-
-    #[test]
-    fn with_from_clears_to() {
-        let s = r#"{"type":"peerhello","to":"bob","nickname":"alice","publickey":"AAAA=="}"#;
-        let msg = deserialize(s).unwrap();
-        let forwarded = msg.with_from("alice".to_string());
-        assert_eq!(
-            serialize(&forwarded),
-            r#"{"type":"peerhello","from":"alice","nickname":"alice","publickey":"AAAA=="}"#
-        );
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NewBlock {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub id: u64,
+    pub block: String,
 }

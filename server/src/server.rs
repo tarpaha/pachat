@@ -1,100 +1,124 @@
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
-
-use tokio::net::TcpListener;
-use tokio::sync::{mpsc, RwLock};
+use crate::{
+    protocol::NewBlock,
+    store::{BlockStore, InMemoryBlockStore},
+};
+use std::{io, net::SocketAddr, sync::Arc};
+use tokio::{
+    net::TcpListener,
+    sync::{broadcast, Mutex},
+    task::JoinSet,
+};
 use tokio_util::sync::CancellationToken;
-
-use crate::protocol::{self, Message};
 
 pub struct ChatServer {
     addr: SocketAddr,
-    clients: RwLock<HashMap<String, mpsc::Sender<String>>>,
+    store: Mutex<Box<dyn BlockStore>>,
+    events: broadcast::Sender<NewBlock>,
 }
 
 impl ChatServer {
     pub fn new(host: &str, port: u16) -> Self {
-        let addr: SocketAddr = format!("{}:{}", host, port).parse().expect("invalid address");
-        ChatServer {
+        Self::with_store(
+            format!("{host}:{port}").parse().expect("invalid address"),
+            Box::new(InMemoryBlockStore::default()),
+        )
+    }
+
+    pub fn with_store(addr: SocketAddr, store: Box<dyn BlockStore>) -> Self {
+        Self {
             addr,
-            clients: RwLock::new(HashMap::new()),
+            store: Mutex::new(store),
+            events: broadcast::channel(128).0,
         }
     }
 
-    pub async fn run(self: Arc<Self>, token: CancellationToken) {
-        let listener = TcpListener::bind(self.addr).await.expect("failed to bind");
-        println!("Server listening on {}", self.addr);
+    pub fn subscribe(&self) -> broadcast::Receiver<NewBlock> {
+        self.events.subscribe()
+    }
 
-        let mut handles = Vec::new();
+    pub async fn publish(&self, block: String) -> Result<(), String> {
+        // Keep allocation, storage and publication in the same order.
+        let mut store = self.store.lock().await;
+        let record = store.append(block)?;
+        let _ = self.events.send(record);
+        Ok(())
+    }
 
-        loop {
+    pub async fn run(self: Arc<Self>, token: CancellationToken) -> io::Result<()> {
+        let listener = TcpListener::bind(self.addr).await?;
+        println!("Server listening on {}", listener.local_addr()?);
+        self.serve(listener, token).await
+    }
+
+    async fn serve(
+        self: Arc<Self>,
+        listener: TcpListener,
+        token: CancellationToken,
+    ) -> io::Result<()> {
+        let mut tasks = JoinSet::new();
+        let result = loop {
             tokio::select! {
-                _ = token.cancelled() => break,
-                result = listener.accept() => {
-                    match result {
-                        Ok((stream, _)) => {
-                            stream.set_nodelay(true).ok();
-                            let server = Arc::clone(&self);
-                            let child = token.child_token();
-                            let handle = tokio::spawn(crate::connection::handle(stream, server, child));
-                            handles.push(handle);
-                        }
-                        Err(_) => break,
-                    }
+                _ = token.cancelled() => break Ok(()),
+                Some(_) = tasks.join_next(), if !tasks.is_empty() => {},
+                accepted = listener.accept() => {
+                    let (stream, _) = match accepted { Ok(value) => value, Err(e) => break Err(e) };
+                    let events = self.subscribe();
+                    tasks.spawn(crate::connection::handle(stream, self.clone(), events, token.child_token()));
                 }
             }
-        }
-
-        for handle in handles {
-            let _ = handle.await;
-        }
-    }
-
-    pub async fn try_register(&self, nick: &str, tx: mpsc::Sender<String>) -> bool {
-        let key = nick.to_lowercase();
-        let mut clients = self.clients.write().await;
-        if clients.contains_key(&key) {
-            return false;
-        }
-        clients.insert(key, tx);
-        true
-    }
-
-    pub async fn unregister(&self, nick: &str) {
-        let key = nick.to_lowercase();
-        self.clients.write().await.remove(&key);
-    }
-
-    pub async fn broadcast(&self, msg: &Message, exclude: Option<&str>) {
-        let line = protocol::serialize(msg);
-        let senders: Vec<mpsc::Sender<String>> = {
-            let clients = self.clients.read().await;
-            clients
-                .iter()
-                .filter(|(nick, _)| {
-                    exclude.map_or(true, |e| !nick.eq_ignore_ascii_case(e))
-                })
-                .map(|(_, tx)| tx.clone())
-                .collect()
         };
-        for tx in senders {
-            let _ = tx.send(line.clone()).await;
-        }
+        tasks.abort_all();
+        while tasks.join_next().await.is_some() {}
+        result
     }
+}
 
-    pub async fn route(&self, sender_nick: &str, msg: Message) {
-        let to = match msg.to_field() {
-            Some(t) => t.to_lowercase(),
-            None => return,
-        };
-        let forwarded = protocol::serialize(&msg.with_from(sender_nick.to_string()));
-        let tx = {
-            let clients = self.clients.read().await;
-            clients.get(&to).cloned()
-        };
-        if let Some(tx) = tx {
-            let _ = tx.send(forwarded).await;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpStream;
+
+    #[tokio::test]
+    async fn publishes_to_sender_and_other_client_without_handshake_or_history() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = Arc::new(ChatServer::with_store(
+                addr,
+                Box::new(InMemoryBlockStore::default()),
+            ));
+            let token = CancellationToken::new();
+            let task = tokio::spawn(server.clone().serve(listener, token.clone()));
+            let mut a = BufReader::new(TcpStream::connect(addr).await.unwrap());
+            let mut b = BufReader::new(TcpStream::connect(addr).await.unwrap());
+            while server.events.receiver_count() != 2 {
+                tokio::task::yield_now().await;
+            }
+            a.get_mut()
+                .write_all(b"{\"type\":\"publish\",\"block\":\"opaque\"}\n")
+                .await
+                .unwrap();
+            for client in [&mut a, &mut b] {
+                let mut line = String::new();
+                client.read_line(&mut line).await.unwrap();
+                let event: NewBlock = serde_json::from_str(&line).unwrap();
+                assert_eq!(event.id, 1);
+                assert_eq!(event.block, "opaque");
+                assert_eq!(event.kind, "new_block");
+            }
+            let mut c = BufReader::new(TcpStream::connect(addr).await.unwrap());
+            assert!(tokio::time::timeout(
+                Duration::from_millis(100),
+                c.read_line(&mut String::new())
+            )
+            .await
+            .is_err());
+            token.cancel();
+            task.await.unwrap().unwrap();
+        })
+        .await
+        .unwrap();
     }
 }

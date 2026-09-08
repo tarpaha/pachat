@@ -1,6 +1,7 @@
 mod connection;
 mod protocol;
 mod server;
+mod store;
 
 use std::sync::Arc;
 
@@ -27,5 +28,8 @@ async fn main() {
         t.cancel();
     });
     let server = Arc::new(ChatServer::new(&args.host, args.port));
-    server.run(token).await;
+    if let Err(error) = server.run(token).await {
+        eprintln!("Server failed: {error}");
+        std::process::exit(1);
+    }
 }
