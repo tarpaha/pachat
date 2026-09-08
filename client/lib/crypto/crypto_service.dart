@@ -32,6 +32,29 @@ class PaCrypto {
     final spki = encodeRsaSpki(pub);
     return PaCrypto._(pub, priv, base64.encode(spki));
   }
+
+  Map<String, dynamic> toJson() => {
+    'n': privateKey.modulus.toString(),
+    'e': publicKey.exponent.toString(),
+    'd': privateKey.privateExponent.toString(),
+    'p': privateKey.p.toString(),
+    'q': privateKey.q.toString(),
+  };
+
+  factory PaCrypto.fromJson(Map<String, dynamic> json) {
+    BigInt read(String key) => BigInt.parse(json[key] as String);
+    final material = KeyMaterial(
+      read('n'),
+      read('e'),
+      read('d'),
+      read('p'),
+      read('q'),
+    );
+    if (material.p * material.q != material.n || material.n.bitLength != 2048) {
+      throw const FormatException('Invalid private key');
+    }
+    return PaCrypto._fromMaterial(material);
+  }
 }
 
 KeyMaterial _generateRsaKeyPair(int bits) {
@@ -109,7 +132,13 @@ EncryptedEnvelope encryptForPeer(RSAPublicKey peerKey, Uint8List plaintext) {
   final tag = encrypted.sublist(encrypted.length - 16);
 
   final rsa = OAEPEncoding.withSHA256(RSAEngine())
-    ..init(true, PublicKeyParameter<RSAPublicKey>(peerKey));
+    ..init(
+      true,
+      ParametersWithRandom(
+        PublicKeyParameter<RSAPublicKey>(peerKey),
+        FortunaRandom()..seed(KeyParameter(_randomBytes(32))),
+      ),
+    );
   final wrappedKey = rsa.process(aesKey);
 
   return EncryptedEnvelope(wrappedKey, iv, ciphertext, tag);
