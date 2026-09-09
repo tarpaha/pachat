@@ -68,7 +68,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final service = widget.service;
     final canSend =
         !service.isDisconnected &&
-        service.friends.received.isNotEmpty &&
+        service.friends.recipients.isNotEmpty &&
         !_sending;
     return Scaffold(
       appBar: AppBar(
@@ -102,7 +102,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         final matches = service.friends.created.where(
                           (f) => f.id == entry.friendKey,
                         );
-                        final name = matches.isNotEmpty
+                        final name = entry.fromSelf
+                            ? 'You'
+                            : matches.isNotEmpty
                             ? matches.first.name
                             : 'Unknown source';
                         final time = entry.timestamp?.toLocal();
@@ -110,7 +112,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             ? ''
                             : '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
                         return Align(
-                          alignment: Alignment.centerLeft,
+                          alignment: entry.fromSelf
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
                           child: Card(
                             child: Padding(
                               padding: const EdgeInsets.all(12),
@@ -178,7 +182,7 @@ class _ChatScreenState extends State<ChatScreen> {
               const Padding(
                 padding: EdgeInsets.all(8),
                 child: Text(
-                  'Open Friends and import a public key to send messages.',
+                  'Only you will receive this message. Import friends’ public keys to include them.',
                 ),
               ),
             Padding(

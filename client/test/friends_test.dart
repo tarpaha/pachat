@@ -18,6 +18,47 @@ class MemoryStorage implements PrivateStorage {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
+    'Legacy profile gains a durable own key; backup merges own keys',
+    () async {
+      final disk = MemoryStorage()..value = '{"version":1,"friends":[]}';
+      final original = FriendsRepository(disk);
+      await original.load();
+      await original.ensureOwnKey();
+      final ownKey = original.ownPublicKeys.single;
+      expect(original.created, isEmpty);
+      expect(original.received, isEmpty);
+      final block = encryptBlock('My private history', original.recipients);
+      final reopened = FriendsRepository(disk);
+      await reopened.load();
+      await reopened.ensureOwnKey();
+      expect(reopened.ownPublicKeys.single, ownKey);
+      expect(
+        decryptBlock(block, reopened.decryptionKeys)!.text,
+        'My private history',
+      );
+      final restored = FriendsRepository(MemoryStorage());
+      await restored.ensureOwnKey();
+      final currentKey = restored.ownPublicKeys.single;
+      final backup = encryptBackup((
+        original.exportJson(),
+        'own key backup password',
+      ));
+      await restored.restore(
+        decryptBackup((backup, 'own key backup password')),
+      );
+      expect(restored.ownPublicKeys, {currentKey, ownKey});
+      expect(restored.recipients.first.publicKey, currentKey);
+      expect(
+        decryptBlock(block, restored.decryptionKeys)!.text,
+        'My private history',
+      );
+      final failed = FriendsRepository(MemoryStorage()..fail = true);
+      await expectLater(failed.ensureOwnKey(), throwsStateError);
+      expect(failed.ownPublicKeys, isEmpty);
+    },
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
+  test(
     'Keys survive reload; multiple recipients decrypt and strangers cannot',
     () async {
       final disk = MemoryStorage();

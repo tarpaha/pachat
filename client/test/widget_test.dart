@@ -13,6 +13,10 @@ void main() {
       ))!;
       final catalog = ProfileCatalog(root);
       await tester.runAsync(() async {
+        final profile = await catalog.open('Alice');
+        await profile.close();
+      });
+      await tester.runAsync(() async {
         await tester.pumpWidget(
           MaterialApp(home: ProfilesScreen(catalog: catalog)),
         );

@@ -103,6 +103,7 @@ class ProfileCatalog {
       }
       final friends = FriendsRepository(ProfileKeysStorage(id, directory));
       await friends.load();
+      await friends.ensureOwnKey();
       return LocalProfile(name, directory, friends, lock);
     } catch (e) {
       await lock?.close();

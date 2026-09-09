@@ -24,7 +24,7 @@ Start the Rust server separately (see `../server/README.md`). Default connection
 3. The friend opens Received keys → Import public key in their own profile and imports your key with a local label.
 4. Repeat in the other direction to enable replies.
 
-Every outgoing message is encrypted separately for **all** received public keys, then published as one block. Each created friend has a separate RSA-2048 key pair. RSA-OAEP-SHA256 wraps a fresh AES-256 key for each copy; AES-GCM encrypts the payload with a fresh 12-byte nonce and 16-byte tag. Key generation and message crypto run outside the UI isolate.
+Every outgoing message is encrypted separately for **all** received public keys and the profile's own public key, then published as one block. Each created friend has a separate RSA-2048 key pair. RSA-OAEP-SHA256 wraps a fresh AES-256 key for each copy; AES-GCM encrypts the payload with a fresh 12-byte nonce and 16-byte tag. Key generation and message crypto run outside the UI isolate.
 
 Decryption selects the local friend entry and therefore its display name. Possession of a public key permits anyone to encrypt for that entry: this is not cryptographic proof of the sender's identity. There are no signatures in this prototype.
 
@@ -43,18 +43,18 @@ Old shared storage is left untouched and is not automatically imported into a na
 
 ## Backups
 
-Friends → menu → Encrypted backup. Enter a password of at least 12 characters and save the encrypted text somewhere safe. The backup contains both friend lists, including private keys. It uses PBKDF2-HMAC-SHA256 (600,000 iterations, random salt) and AES-256-GCM.
+Friends → menu → Encrypted backup. Enter a password of at least 12 characters and save the encrypted text somewhere safe. The backup contains both friend lists and the profile's own key pairs, including private keys. It uses PBKDF2-HMAC-SHA256 (600,000 iterations, random salt) and AES-256-GCM.
 
-Restore backup merges missing keys into the current profile, preserving existing entries. Backups do not include history. Without a matching private key, a saved block displays as unknown; restoring the key makes matching blocks readable again.
+Restore backup merges missing keys into the current profile, preserving existing entries. Restored own keys remain available for reading old messages; the current own key continues to be used for new self copies. Backups do not include history. Without a matching private key, a saved block displays as unknown; restoring the key makes matching blocks readable again.
 
 ## Chat behavior
 
 - New blocks arrive only while connected; there is no server history request or automatic resend.
 - Only blocks received in `new_block` are added to history. There is no separate outgoing history or outgoing status.
-- The sender receives its own block too. If none of its private keys can decrypt it, it appears as unknown, just like any other undecryptable block.
+- The profile generates and securely saves an own RSA pair once. Existing profiles gain this pair on first opening after the update. Its public key is not exposed in the friends UI or sent to the server. Each publication includes a copy encrypted for this key. When the block returns, own keys are tried first; successful decryption displays You on the right. This also works after restarting or restoring the profile backup. Older blocks without a self copy cannot be recovered this way.
 - Unknown or malformed encrypted content never exposes message text.
 - Server IDs restart after server restart; they are not treated as globally unique.
-- Maximum plaintext: 16 KiB; maximum recipients: 256.
+- Maximum plaintext: 16 KiB; maximum 256 friend copies plus one self copy. Sending without imported friends is allowed and creates only the self copy.
 
 This is a test implementation: the server keeps an unbounded in-memory log and client history rewrites its block list. There is no history pagination, forward secrecy, metadata anonymity, or multi-device synchronization.
 

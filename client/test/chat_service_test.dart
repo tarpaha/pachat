@@ -103,7 +103,9 @@ void main() {
       expect(a.entries.single.serverId, 1);
       expect(aliceDisk.value!.contains('Hello Bob'), isFalse);
       expect(aliceDisk.value!.contains('friendKey'), isFalse);
-      expect(a.entries.single.text, isNull);
+      expect(a.entries.single.text, 'Hello Bob 🔐');
+      expect(a.entries.single.fromSelf, isTrue);
+      expect(b.entries.single.fromSelf, isFalse);
       aliceDisk.fail = true;
       await b.sendChat('Привет, Алиса');
       await until(() => a.entries.length == 2 && b.entries.length == 2);
@@ -131,6 +133,8 @@ void main() {
         restored.dispose();
       });
       expect(restored.entries, hasLength(3));
+      expect(restored.entries.first.text, 'Hello Bob 🔐');
+      expect(restored.entries.first.fromSelf, isTrue);
       expect(restored.entries[1].text, 'Привет, Алиса');
       final noKeys = await ChatService.connect(
         host: '127.0.0.1',

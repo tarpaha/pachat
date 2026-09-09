@@ -44,9 +44,20 @@ String validatePublicKey(String value) {
 class FriendsRepository extends ChangeNotifier {
   final PrivateStorage storage;
   List<FriendKey> _friends = [];
+  List<PaCrypto> _ownKeys = [];
   Future<void> _writes = Future.value();
   FriendsRepository(this.storage);
   Future<void> flush() => _writes;
+  List<FriendKey> get decryptionKeys => [
+    for (final pair in _ownKeys) FriendKey('You', pair.publicKeyBase64, pair),
+    ...created,
+  ];
+  Set<String> get ownPublicKeys =>
+      _ownKeys.map((e) => e.publicKeyBase64).toSet();
+  List<FriendKey> get recipients => [
+    if (_ownKeys.isNotEmpty) FriendKey('You', _ownKeys.first.publicKeyBase64),
+    ...received,
+  ];
   List<FriendKey> get created =>
       List.unmodifiable(_friends.where((e) => e.pair != null));
   List<FriendKey> get received =>
@@ -54,13 +65,18 @@ class FriendsRepository extends ChangeNotifier {
 
   Future<void> load() async {
     final value = await storage.read();
-    if (value != null) _friends = decode(value);
+    if (value != null) {
+      final friends = decode(value);
+      final ownKeys = _decodeOwnKeys(value);
+      _friends = friends;
+      _ownKeys = ownKeys;
+    }
     notifyListeners();
   }
 
   static List<FriendKey> decode(String value) {
     final json = jsonDecode(value) as Map<String, dynamic>;
-    if (json['version'] != 1) {
+    if (json['version'] != 1 && json['version'] != 2) {
       throw const FormatException('Unsupported friends version');
     }
     final entries = (json['friends'] as List)
@@ -72,23 +88,44 @@ class FriendsRepository extends ChangeNotifier {
     return entries;
   }
 
-  String exportJson() => jsonEncode({
-    'version': 1,
-    'friends': _friends.map((e) => e.toJson()).toList(),
-  });
+  static List<PaCrypto> _decodeOwnKeys(String value) {
+    final json = jsonDecode(value) as Map<String, dynamic>;
+    if (json['version'] == 1) return [];
+    return (json['ownKeys'] as List)
+        .map((e) => PaCrypto.fromJson(Map<String, dynamic>.from(e)))
+        .toList();
+  }
+
+  String _encode(List<FriendKey> friends, List<PaCrypto> ownKeys) =>
+      jsonEncode({
+        'version': 2,
+        'friends': friends.map((e) => e.toJson()).toList(),
+        'ownKeys': ownKeys.map((e) => e.toJson()).toList(),
+      });
+
+  String exportJson() => _encode(_friends, _ownKeys);
+
+  Future<void> ensureOwnKey() {
+    if (_ownKeys.isNotEmpty) return Future.value();
+    return _change(
+      (items) => items,
+      editOwnKeys: (keys) async =>
+          keys.isEmpty ? [await PaCrypto.generate()] : keys,
+    );
+  }
 
   Future<void> _change(
-    FutureOr<List<FriendKey>> Function(List<FriendKey>) edit,
-  ) {
+    FutureOr<List<FriendKey>> Function(List<FriendKey>) edit, {
+    FutureOr<List<PaCrypto>> Function(List<PaCrypto>)? editOwnKeys,
+  }) {
     final operation = _writes.then((_) async {
       final next = await edit(List.of(_friends));
-      await storage.write(
-        jsonEncode({
-          'version': 1,
-          'friends': next.map((e) => e.toJson()).toList(),
-        }),
-      );
+      final ownKeys = editOwnKeys == null
+          ? _ownKeys
+          : await editOwnKeys(List.of(_ownKeys));
+      await storage.write(_encode(next, ownKeys));
       _friends = next;
+      _ownKeys = ownKeys;
       notifyListeners();
     });
     _writes = operation.catchError((Object _) {});
@@ -132,9 +169,16 @@ class FriendsRepository extends ChangeNotifier {
 
   Future<void> restore(String value) async {
     final restored = decode(value);
-    await _change((items) {
-      final ids = items.map((e) => e.id).toSet();
-      return [...items, ...restored.where((e) => ids.add(e.id))];
-    });
+    final ownKeys = _decodeOwnKeys(value);
+    await _change(
+      (items) {
+        final ids = items.map((e) => e.id).toSet();
+        return [...items, ...restored.where((e) => ids.add(e.id))];
+      },
+      editOwnKeys: (keys) {
+        final ids = keys.map((e) => e.publicKeyBase64).toSet();
+        return [...keys, ...ownKeys.where((e) => ids.add(e.publicKeyBase64))];
+      },
+    );
   }
 }

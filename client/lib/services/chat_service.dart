@@ -9,7 +9,7 @@ import 'friends_repository.dart';
 
 String _encrypt((String, List<FriendKey>) args) =>
     encryptBlock(args.$1, args.$2);
-List<ChatEntry> _decode((List<ChatEntry>, List<FriendKey>) args) =>
+List<ChatEntry> _decode((List<ChatEntry>, List<FriendKey>, Set<String>) args) =>
     args.$1.map((record) {
       final decoded = decryptBlock(record.block, args.$2);
       return ChatEntry(
@@ -18,6 +18,7 @@ List<ChatEntry> _decode((List<ChatEntry>, List<FriendKey>) args) =>
         friendKey: decoded?.friendKey,
         text: decoded?.text,
         timestamp: decoded?.timestamp,
+        fromSelf: decoded != null && args.$3.contains(decoded.friendKey),
       );
     }).toList();
 
@@ -49,6 +50,7 @@ class ChatService extends ChangeNotifier {
     required PrivateStorage historyStorage,
     String profileName = '',
   }) async {
+    await friends.ensureOwnKey();
     final saved = await historyStorage.read();
     var records = <ChatEntry>[];
     if (saved != null) {
@@ -60,7 +62,11 @@ class ChatService extends ChangeNotifier {
           .map((e) => ChatEntry.fromJson(Map<String, dynamic>.from(e)))
           .toList();
     }
-    final entries = await compute(_decode, (records, friends.created));
+    final entries = await compute(_decode, (
+      records,
+      friends.decryptionKeys,
+      friends.ownPublicKeys,
+    ));
     final socket = await Socket.connect(
       host,
       port,
@@ -92,7 +98,11 @@ class ChatService extends ChangeNotifier {
   void _friendsChanged() {
     unawaited(
       _serial(() async {
-        _entries = await compute(_decode, (_entries, friends.created));
+        _entries = await compute(_decode, (
+          _entries,
+          friends.decryptionKeys,
+          friends.ownPublicKeys,
+        ));
         _notify();
       }).catchError((Object e) {
         error = 'Could not refresh messages: $e';
@@ -121,7 +131,7 @@ class ChatService extends ChangeNotifier {
   Future<void> sendChat(String text) => _serial(() async {
     if (_disconnected) throw StateError('Disconnected');
     if (text.trim().isEmpty) return;
-    final block = await compute(_encrypt, (text, friends.received));
+    final block = await compute(_encrypt, (text, friends.recipients));
     final line = encodePublish(block);
     if (_disconnected) throw StateError('Disconnected');
     _socket.add(utf8.encode(line));
@@ -134,7 +144,8 @@ class ChatService extends ChangeNotifier {
         await _serial(() async {
           final decoded = await compute(_decode, (
             [ChatEntry(serverId: event.id, block: event.block)],
-            friends.created,
+            friends.decryptionKeys,
+            friends.ownPublicKeys,
           ));
           _entries = [..._entries, ...decoded];
           _notify();

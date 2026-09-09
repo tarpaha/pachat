@@ -11,6 +11,7 @@ void main() {
       final catalog = ProfileCatalog(root);
       final alice = await catalog.open('Alice');
       final bob = await catalog.open('Bob');
+      final ownKey = alice.friends.ownPublicKeys.single;
       try {
         await alice.friends.create('Bob');
         final key = alice.friends.created.single.publicKey;
@@ -20,6 +21,7 @@ void main() {
         expect(await bob.history('server:9000').read(), isNull);
         await alice.close();
         final reopened = await catalog.open('Alice');
+        expect(reopened.friends.ownPublicKeys.single, ownKey);
         expect(reopened.friends.created.single.publicKey, key);
         expect(reopened.friends.created.single.name, 'Bob');
         expect(await catalog.names(), ['Alice', 'Bob']);
