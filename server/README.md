@@ -32,7 +32,7 @@ The server preserves the string value exactly. Flutter uses Base64-encoded JSON 
 
 IDs start at 1 and increase in storage order. Saving and broadcasting are ordered together. A `new_block` is emitted only after storage succeeds. Connecting does not replay stored blocks. Disconnecting clients miss subsequent blocks.
 
-A publish line, including LF, may contain at most 1 MiB minus 64 bytes; the remaining bytes allow the response type and ID to fit in 1 MiB. Empty blocks, malformed requests, unsupported operations, oversize frames, storage errors, and lagging broadcast receivers cause connection closure. There is deliberately no third error operation in this prototype.
+Empty blocks, malformed requests, unsupported operations, storage errors, and lagging broadcast receivers cause connection closure. There is deliberately no third error operation in this prototype.
 
 ## Storage and lifecycle
 

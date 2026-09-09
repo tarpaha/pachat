@@ -1,16 +1,7 @@
 import 'dart:convert';
 
-const maxLineBytes = 1024 * 1024;
-// new_block needs up to 28 extra bytes (type name and uint64 ID).
-// Keep the same conservative reserve as the server.
-const newBlockOverheadBytes = 64;
-const maxPublishLineBytes = maxLineBytes - newBlockOverheadBytes;
-
 String encodePublish(String block) {
   final line = '${jsonEncode({'type': 'publish', 'block': block})}\n';
-  if (utf8.encode(line).length > maxPublishLineBytes) {
-    throw const FormatException('Message block is too large');
-  }
   return line;
 }
 
@@ -30,23 +21,17 @@ class NewBlock {
   }
 }
 
-Stream<String> boundedLines(Stream<List<int>> input) async* {
+Stream<String> readLines(Stream<List<int>> input) async* {
   var pending = <int>[];
   await for (final chunk in input) {
     var start = 0;
     for (var i = 0; i < chunk.length; i++) {
       if (chunk[i] == 10) {
-        if (pending.length + i - start + 1 > maxLineBytes) {
-          throw const FormatException('Block too large');
-        }
         pending.addAll(chunk.sublist(start, i));
         yield utf8.decode(pending);
         pending = <int>[];
         start = i + 1;
       }
-    }
-    if (pending.length + chunk.length - start >= maxLineBytes) {
-      throw const FormatException('Block too large');
     }
     pending.addAll(chunk.sublist(start));
   }

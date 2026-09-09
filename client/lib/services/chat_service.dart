@@ -118,7 +118,7 @@ class ChatService extends ChangeNotifier {
 
   Future<void> _receive() async {
     try {
-      await for (final line in boundedLines(_socket)) {
+      await for (final line in readLines(_socket)) {
         final event = NewBlock.decode(line);
         await _serial(() async {
           final digest = blockDigest(event.block);

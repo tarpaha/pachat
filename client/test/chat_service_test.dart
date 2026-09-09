@@ -24,17 +24,13 @@ void main() {
     () async {
       final bytes = utf8.encode('привет\nnext\n');
       expect(
-        await boundedLines(
+        await readLines(
           Stream.fromIterable([bytes.sublist(0, 1), bytes.sublist(1)]),
         ).toList(),
         ['привет', 'next'],
       );
       await expectLater(
-        boundedLines(Stream.value(utf8.encode('partial'))).toList(),
-        throwsFormatException,
-      );
-      await expectLater(
-        boundedLines(Stream.value(List.filled(maxLineBytes, 65))).toList(),
+        readLines(Stream.value(utf8.encode('partial'))).toList(),
         throwsFormatException,
       );
     },

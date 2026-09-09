@@ -1,10 +1,10 @@
 use crate::{
-    protocol::{NewBlock, Request, MAX_LINE_BYTES, MAX_PUBLISH_LINE_BYTES},
+    protocol::{NewBlock, Request},
     server::ChatServer,
 };
 use std::sync::Arc;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
     sync::broadcast,
 };
@@ -22,14 +22,11 @@ pub async fn handle(
     let receive = async {
         loop {
             let mut line = Vec::new();
-            let count = (&mut reader)
-                .take((MAX_LINE_BYTES + 1) as u64)
-                .read_until(b'\n', &mut line)
-                .await?;
+            let count = reader.read_until(b'\n', &mut line).await?;
             if count == 0 {
                 return Ok::<(), std::io::Error>(());
             }
-            if count > MAX_PUBLISH_LINE_BYTES || line.last() != Some(&b'\n') {
+            if line.last() != Some(&b'\n') {
                 break;
             }
             let request = serde_json::from_slice(&line);

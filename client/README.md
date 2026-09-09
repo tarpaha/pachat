@@ -40,7 +40,7 @@ Restore backup accepts the saved text and password and merges missing keys, pres
 - An outgoing entry starts as `pending`; receipt of the identical block changes it to `stored` with the server ID. This means saved in server memory, not read by a friend.
 - Disconnection makes unresolved outgoing entries `unconfirmed`. Identical block bytes are deduplicated using a local SHA-256 digest.
 - Server IDs restart after server restart. They are display metadata, not the local deduplication key.
-- Maximum plaintext: 16 KiB; maximum recipients: 256. The final encoded publication must also fit in the transport limit, so large recipient lists reduce the usable message size.
+- Maximum plaintext: 16 KiB; maximum recipients: 256.
 
 This is a test implementation: the server keeps an unbounded in-memory log and client history is rewritten as an encrypted document. There is no history pagination, forward secrecy, metadata anonymity, or multi-device synchronization.
 
@@ -58,4 +58,4 @@ For the real Rust/Flutter integration test, build the server first and pass the 
 flutter test --dart-define=PACHAT_SERVER_BIN=C:/code/pachat/server/target/debug/pachat-server.exe
 ```
 
-Without that define, only the real-server test is skipped. Tests cover key persistence, separate recipients, backup recovery, failed writes, framing limits, unknown blocks, echo deduplication, local history, and the friends menu.
+Without that define, only the real-server test is skipped. Tests cover key persistence, separate recipients, backup recovery, failed writes, line framing, unknown blocks, echo deduplication, local history, and the friends menu.
