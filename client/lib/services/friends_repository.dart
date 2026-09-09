@@ -1,20 +1,11 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../crypto/crypto_service.dart';
 
 abstract interface class PrivateStorage {
   Future<String?> read();
   Future<void> write(String value);
-}
-
-class DevicePrivateStorage implements PrivateStorage {
-  static const _storage = FlutterSecureStorage();
-  @override
-  Future<String?> read() => _storage.read(key: 'pachat.friends.v1');
-  @override
-  Future<void> write(String value) =>
-      _storage.write(key: 'pachat.friends.v1', value: value);
 }
 
 class FriendKey {
@@ -55,6 +46,7 @@ class FriendsRepository extends ChangeNotifier {
   List<FriendKey> _friends = [];
   Future<void> _writes = Future.value();
   FriendsRepository(this.storage);
+  Future<void> flush() => _writes;
   List<FriendKey> get created =>
       List.unmodifiable(_friends.where((e) => e.pair != null));
   List<FriendKey> get received =>
@@ -85,9 +77,11 @@ class FriendsRepository extends ChangeNotifier {
     'friends': _friends.map((e) => e.toJson()).toList(),
   });
 
-  Future<void> _change(List<FriendKey> Function(List<FriendKey>) edit) {
+  Future<void> _change(
+    FutureOr<List<FriendKey>> Function(List<FriendKey>) edit,
+  ) {
     final operation = _writes.then((_) async {
-      final next = edit(List.of(_friends));
+      final next = await edit(List.of(_friends));
       await storage.write(
         jsonEncode({
           'version': 1,
@@ -103,10 +97,10 @@ class FriendsRepository extends ChangeNotifier {
 
   Future<void> create(String name) async {
     if (name.trim().isEmpty) throw const FormatException('Enter a name');
-    final pair = await PaCrypto.generate();
-    await _change(
-      (items) => [...items, FriendKey(name.trim(), pair.publicKeyBase64, pair)],
-    );
+    await _change((items) async {
+      final pair = await PaCrypto.generate();
+      return [...items, FriendKey(name.trim(), pair.publicKeyBase64, pair)];
+    });
   }
 
   Future<void> importKey(String name, String value) async {
