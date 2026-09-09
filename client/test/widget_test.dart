@@ -12,9 +12,11 @@ void main() {
         () => Directory.systemTemp.createTemp('pachat-widget-'),
       ))!;
       final catalog = ProfileCatalog(root);
+      late String peerKey;
       await tester.runAsync(() async {
         final profile = await catalog.open('Alice');
         await profile.friends.create('Bob');
+        peerKey = profile.friends.friends.single.publicKey;
         await profile.close();
       });
       await tester.runAsync(() async {
@@ -45,7 +47,29 @@ void main() {
       expect(find.text('Add friend'), findsOneWidget);
       expect(find.byType(TabBar), findsNothing);
       expect(find.text('Share public key'), findsOneWidget);
-      expect(find.text('Friend’s public key'), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+      await tester.tap(find.text('Add friend’s key'));
+      await tester.pumpAndSettle();
+      expect(find.text('Public key — Bob'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'invalid');
+      await tester.tap(find.text('Save key'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Could not save key:'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), peerKey);
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Save key'));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+      await tester.tap(find.text('View / edit friend’s key'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        peerKey,
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
       await tester.pageBack();
       await tester.pumpAndSettle();
       await tester.runAsync(() async {

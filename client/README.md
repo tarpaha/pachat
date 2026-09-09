@@ -21,7 +21,7 @@ Start the Rust server separately (see `../server/README.md`). Default connection
 
 1. Open the menu → Friends → Add friend. Enter the friend's local name.
 2. In that friend's card, use Share public key or Copy key to send your generated public key to the friend. This lets you read messages they encrypt for you. Share opens platform sharing on Android and a mail composer on Windows; copying works with any external channel.
-3. Ask the friend for their generated public key, paste it into Friend's public key in the same card, and save it. This lets the friend read messages you send. No private keys are shared.
+3. Ask the friend for their generated public key. In the card, choose Add friend's key to open a separate window, paste the key and save it. View / edit friend's key opens that window with the saved value. This lets the friend read messages you send. No private keys are shared.
 4. Repeat in the other direction to enable replies.
 
 Every outgoing message is encrypted separately for **all** received public keys and the profile's own public key, then published as one block. Each created friend has a separate RSA-2048 key pair. RSA-OAEP-SHA256 wraps a fresh AES-256 key for each copy; AES-GCM encrypts the payload with a fresh 12-byte nonce and 16-byte tag. Key generation and message crypto run outside the UI isolate.

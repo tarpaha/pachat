@@ -157,32 +157,6 @@ class _FriendsScreenState extends State<FriendsScreen> {
     });
   }
 
-  Future<void> _acceptKey(FriendKey friend, String value) async {
-    if (friend.peerPublicKey != null && friend.peerPublicKey != value.trim()) {
-      final replace = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Replace friend’s public key?'),
-          content: const Text(
-            'Future messages will use the new key. Your key for reading this friend’s messages stays the same.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Replace'),
-            ),
-          ],
-        ),
-      );
-      if (replace != true || !mounted) return;
-    }
-    await _run(() => widget.repository.setPeerKey(friend, value));
-  }
-
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
@@ -241,7 +215,14 @@ class _FriendsScreenState extends State<FriendsScreen> {
                             );
                           }
                         }),
-                        onSave: (value) => _acceptKey(friend, value),
+                        onOpenKey: () => showDialog<void>(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (_) => _FriendKeyDialog(
+                            friend: friend,
+                            repository: widget.repository,
+                          ),
+                        ),
                         onRename: () => _rename(friend),
                         onDelete: () => _remove(friend),
                       );
@@ -254,44 +235,22 @@ class _FriendsScreenState extends State<FriendsScreen> {
   );
 }
 
-class _FriendCard extends StatefulWidget {
+class _FriendCard extends StatelessWidget {
   final FriendKey friend;
   final bool busy;
   final void Function(BuildContext) onShare;
   final VoidCallback onCopy, onRename, onDelete;
-  final void Function(String) onSave;
+  final VoidCallback onOpenKey;
   const _FriendCard({
     super.key,
     required this.friend,
     required this.busy,
     required this.onShare,
     required this.onCopy,
-    required this.onSave,
+    required this.onOpenKey,
     required this.onRename,
     required this.onDelete,
   });
-  @override
-  State<_FriendCard> createState() => _FriendCardState();
-}
-
-class _FriendCardState extends State<_FriendCard> {
-  late final _keyInput = TextEditingController(
-    text: widget.friend.peerPublicKey ?? '',
-  );
-  @override
-  void didUpdateWidget(covariant _FriendCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.friend.peerPublicKey != widget.friend.peerPublicKey) {
-      _keyInput.text = widget.friend.peerPublicKey ?? '';
-    }
-  }
-
-  @override
-  void dispose() {
-    _keyInput.dispose();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) => Card(
     child: Padding(
@@ -303,17 +262,17 @@ class _FriendCardState extends State<_FriendCard> {
             children: [
               Expanded(
                 child: Text(
-                  widget.friend.name,
+                  friend.name,
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
               PopupMenuButton<String>(
-                enabled: !widget.busy,
+                enabled: !busy,
                 onSelected: (value) {
                   if (value == 'rename') {
-                    widget.onRename();
+                    onRename();
                   } else {
-                    widget.onDelete();
+                    onDelete();
                   }
                 },
                 itemBuilder: (_) => const [
@@ -334,13 +293,13 @@ class _FriendCardState extends State<_FriendCard> {
             children: [
               Builder(
                 builder: (context) => FilledButton.icon(
-                  onPressed: widget.busy ? null : () => widget.onShare(context),
+                  onPressed: busy ? null : () => onShare(context),
                   icon: const Icon(Icons.share),
                   label: const Text('Share public key'),
                 ),
               ),
               OutlinedButton.icon(
-                onPressed: widget.busy ? null : widget.onCopy,
+                onPressed: busy ? null : onCopy,
                 icon: const Icon(Icons.copy),
                 label: const Text('Copy key'),
               ),
@@ -348,18 +307,7 @@ class _FriendCardState extends State<_FriendCard> {
           ),
           const Divider(height: 32),
           const Text(
-            'Ask your friend for their public key and paste it here so they can read your messages.',
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _keyInput,
-            enabled: !widget.busy,
-            minLines: 2,
-            maxLines: 4,
-            decoration: const InputDecoration(
-              labelText: 'Friend’s public key',
-              border: OutlineInputBorder(),
-            ),
+            'Add your friend’s public key so they can read your messages.',
           ),
           const SizedBox(height: 8),
           Wrap(
@@ -368,13 +316,15 @@ class _FriendCardState extends State<_FriendCard> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               FilledButton(
-                onPressed: widget.busy
-                    ? null
-                    : () => widget.onSave(_keyInput.text),
-                child: const Text('Save friend’s key'),
+                onPressed: busy ? null : onOpenKey,
+                child: Text(
+                  friend.peerPublicKey == null
+                      ? 'Add friend’s key'
+                      : 'View / edit friend’s key',
+                ),
               ),
               Text(
-                widget.friend.peerPublicKey == null
+                friend.peerPublicKey == null
                     ? 'Key not added — this friend cannot read your messages yet.'
                     : 'Key saved — this friend is included when you send.',
               ),
@@ -382,6 +332,121 @@ class _FriendCardState extends State<_FriendCard> {
           ),
         ],
       ),
+    ),
+  );
+}
+
+class _FriendKeyDialog extends StatefulWidget {
+  final FriendKey friend;
+  final FriendsRepository repository;
+  const _FriendKeyDialog({required this.friend, required this.repository});
+  @override
+  State<_FriendKeyDialog> createState() => _FriendKeyDialogState();
+}
+
+class _FriendKeyDialogState extends State<_FriendKeyDialog> {
+  late final _input = TextEditingController(
+    text: widget.friend.peerPublicKey ?? '',
+  );
+  bool _saving = false;
+  String? _error;
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final key = validatePublicKey(_input.text);
+      if (widget.friend.peerPublicKey != null &&
+          widget.friend.peerPublicKey != key) {
+        final replace = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Replace friend’s public key?'),
+            content: const Text(
+              'Future messages will use the new key. Your key for reading this friend’s messages stays the same.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Replace'),
+              ),
+            ],
+          ),
+        );
+        if (replace != true) return;
+      }
+      await widget.repository.setPeerKey(widget.friend, key);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not save key: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _input.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_saving,
+    child: AlertDialog(
+      title: Text('Public key — ${widget.friend.name}'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Ask your friend for their public key and paste it here so they can read your messages.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _input,
+                enabled: !_saving,
+                autofocus: true,
+                minLines: 4,
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  labelText: 'Friend’s public key',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(
+                    _error!,
+                    style: const TextStyle(color: Colors.redAccent),
+                  ),
+                ),
+              if (_saving) const LinearProgressIndicator(),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: const Text('Save key'),
+        ),
+      ],
     ),
   );
 }
