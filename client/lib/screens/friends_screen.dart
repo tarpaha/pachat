@@ -253,6 +253,11 @@ class _FriendCard extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) => Card(
+    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+      side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant),
+    ),
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -323,20 +328,22 @@ class _FriendCard extends StatelessWidget {
                       : 'View / edit friend’s key',
                 ),
               ),
-              Tooltip(
-                message: friend.peerPublicKey == null
-                    ? 'Friend’s key not added'
-                    : 'Friend’s key saved',
-                child: Icon(
-                  friend.peerPublicKey == null ? Icons.close : Icons.check,
-                  color: friend.peerPublicKey == null
-                      ? Colors.redAccent
-                      : Colors.green,
-                  semanticLabel: friend.peerPublicKey == null
-                      ? 'Friend’s key not added'
-                      : 'Friend’s key saved',
+              if (friend.peerPublicKey == null)
+                Text(
+                  'Friend’s public key has not been added yet.',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
+                  ),
+                )
+              else
+                const Tooltip(
+                  message: 'Friend’s key saved',
+                  child: Icon(
+                    Icons.check,
+                    color: Colors.green,
+                    semanticLabel: 'Friend’s key saved',
+                  ),
                 ),
-              ),
             ],
           ),
         ],
