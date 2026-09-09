@@ -1,10 +1,14 @@
 import 'dart:convert';
 
 const maxLineBytes = 1024 * 1024;
+// new_block needs up to 28 extra bytes (type name and uint64 ID).
+// Keep the same conservative reserve as the server.
+const newBlockOverheadBytes = 64;
+const maxPublishLineBytes = maxLineBytes - newBlockOverheadBytes;
 
 String encodePublish(String block) {
   final line = '${jsonEncode({'type': 'publish', 'block': block})}\n';
-  if (utf8.encode(line).length > maxLineBytes - 64) {
+  if (utf8.encode(line).length > maxPublishLineBytes) {
     throw const FormatException('Message block is too large');
   }
   return line;

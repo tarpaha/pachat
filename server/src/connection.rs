@@ -1,5 +1,5 @@
 use crate::{
-    protocol::{NewBlock, Request, MAX_LINE_BYTES},
+    protocol::{NewBlock, Request, MAX_LINE_BYTES, MAX_PUBLISH_LINE_BYTES},
     server::ChatServer,
 };
 use std::sync::Arc;
@@ -29,13 +29,18 @@ pub async fn handle(
             if count == 0 {
                 return Ok::<(), std::io::Error>(());
             }
-            if count > MAX_LINE_BYTES - 64 || line.last() != Some(&b'\n') {
+            if count > MAX_PUBLISH_LINE_BYTES || line.last() != Some(&b'\n') {
                 break;
             }
-            let Ok(Request::Publish { block }) = serde_json::from_slice(&line) else {
+            let request = serde_json::from_slice(&line);
+            let Ok(Request::Publish { block }) = request else {
                 break;
             };
-            if block.is_empty() || server.publish(block).await.is_err() {
+            if block.is_empty() {
+                break;
+            }
+            let publish_result = server.publish(block).await;
+            if publish_result.is_err() {
                 break;
             }
         }
@@ -43,7 +48,11 @@ pub async fn handle(
     };
     let send = async {
         // A lagging receiver is disconnected instead of silently losing blocks.
-        while let Ok(record) = events.recv().await {
+        loop {
+            let event = events.recv().await;
+            let Ok(record) = event else {
+                break;
+            };
             let mut bytes = serde_json::to_vec(&record)?;
             bytes.push(b'\n');
             writer.write_all(&bytes).await?;
