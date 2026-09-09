@@ -14,6 +14,7 @@ void main() {
       final catalog = ProfileCatalog(root);
       await tester.runAsync(() async {
         final profile = await catalog.open('Alice');
+        await profile.friends.create('Bob');
         await profile.close();
       });
       await tester.runAsync(() async {
@@ -41,7 +42,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Friends'));
       await tester.pumpAndSettle();
-      expect(find.text('Created by me'), findsOneWidget);
+      expect(find.text('Add friend'), findsOneWidget);
+      expect(find.byType(TabBar), findsNothing);
+      expect(find.text('Share public key'), findsOneWidget);
+      expect(find.text('Friend’s public key'), findsOneWidget);
       await tester.pageBack();
       await tester.pumpAndSettle();
       await tester.runAsync(() async {

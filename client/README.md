@@ -19,9 +19,9 @@ Start the Rust server separately (see `../server/README.md`). Default connection
 
 ## Exchange keys
 
-1. Open the menu → Friends → Created by me → Create friend. Enter the friend's local name.
-2. Show and copy that entry's public key. Send it to that friend through another channel.
-3. The friend opens Received keys → Import public key in their own profile and imports your key with a local label.
+1. Open the menu → Friends → Add friend. Enter the friend's local name.
+2. In that friend's card, use Share public key or Copy key to send your generated public key to the friend. This lets you read messages they encrypt for you. Share opens platform sharing on Android and a mail composer on Windows; copying works with any external channel.
+3. Ask the friend for their generated public key, paste it into Friend's public key in the same card, and save it. This lets the friend read messages you send. No private keys are shared.
 4. Repeat in the other direction to enable replies.
 
 Every outgoing message is encrypted separately for **all** received public keys and the profile's own public key, then published as one block. Each created friend has a separate RSA-2048 key pair. RSA-OAEP-SHA256 wraps a fresh AES-256 key for each copy; AES-GCM encrypts the payload with a fresh 12-byte nonce and 16-byte tag. Key generation and message crypto run outside the UI isolate.
@@ -43,7 +43,9 @@ Old shared storage is left untouched and is not automatically imported into a na
 
 ## Backups
 
-Friends → menu → Encrypted backup. Enter a password of at least 12 characters and save the encrypted text somewhere safe. The backup contains both friend lists and the profile's own key pairs, including private keys. It uses PBKDF2-HMAC-SHA256 (600,000 iterations, random salt) and AES-256-GCM.
+Friends → menu → Encrypted backup. Enter a password of at least 12 characters and save the encrypted text somewhere safe. The backup contains the unified friend records and the profile's own key pairs, including private keys. It uses PBKDF2-HMAC-SHA256 (600,000 iterations, random salt) and AES-256-GCM.
+
+Friend storage version 3 keeps the name, locally generated key pair and received peer public key in one record. Versions 1 and 2 and their backups remain readable. An unambiguous pair of old entries with matching names is joined; ambiguous labels remain separate. Old entries containing only an imported key gain a local pair so the reverse direction can be set up. Existing private keys are preserved. Replacing a received key asks for confirmation; deleting a friend removes both directions.
 
 Restore backup merges missing keys into the current profile, preserving existing entries. Restored own keys remain available for reading old messages; the current own key continues to be used for new self copies. Backups do not include history. Without a matching private key, a saved block displays as unknown; restoring the key makes matching blocks readable again.
 

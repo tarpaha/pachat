@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 import '../crypto/backup_crypto.dart';
 import '../services/friends_repository.dart';
 
@@ -44,17 +45,10 @@ class _FriendsScreenState extends State<FriendsScreen> {
     ),
   );
 
-  Future<void> _add(bool created) async {
-    final values = await _ask(
-      created ? 'Create friend' : 'Import public key',
-      created ? ['Friend name'] : ['Friend name', 'Public key'],
-    );
+  Future<void> _add() async {
+    final values = await _ask('Add friend', ['Friend name']);
     if (values == null || !mounted) return;
-    await _run(
-      () => created
-          ? widget.repository.create(values[0])
-          : widget.repository.importKey(values[0], values[1]),
-    );
+    await _run(() => widget.repository.create(values[0]));
   }
 
   Future<void> _rename(FriendKey friend) async {
@@ -149,102 +143,244 @@ class _FriendsScreenState extends State<FriendsScreen> {
     });
   }
 
-  Widget _list(bool created) {
-    final friends = created
-        ? widget.repository.created
-        : widget.repository.received;
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            created
-                ? 'Create a separate key pair for each friend. Share only the public key with that person.'
-                : 'Import keys sent to you. Each message includes a copy for every key in this list.',
+  Future<void> _share(FriendKey friend, BuildContext buttonContext) async {
+    final box = buttonContext.findRenderObject() as RenderBox;
+    final origin = box.localToGlobal(Offset.zero) & box.size;
+    await _run(() async {
+      await SharePlus.instance.share(
+        ShareParams(
+          text: friend.publicKey,
+          title: 'PaChat public key',
+          sharePositionOrigin: origin,
+        ),
+      );
+    });
+  }
+
+  Future<void> _acceptKey(FriendKey friend, String value) async {
+    if (friend.peerPublicKey != null && friend.peerPublicKey != value.trim()) {
+      final replace = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Replace friend’s public key?'),
+          content: const Text(
+            'Future messages will use the new key. Your key for reading this friend’s messages stays the same.',
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Replace'),
+            ),
+          ],
         ),
-        FilledButton.icon(
-          onPressed: _busy ? null : () => _add(created),
-          icon: const Icon(Icons.add),
-          label: Text(created ? 'Create friend' : 'Import public key'),
-        ),
-        Expanded(
-          child: friends.isEmpty
-              ? const Center(child: Text('No friends yet'))
-              : ListView.builder(
-                  itemCount: friends.length,
-                  itemBuilder: (context, i) {
-                    final friend = friends[i];
-                    return ListTile(
-                      title: Text(friend.name),
-                      subtitle: Text(
-                        created
-                            ? 'Private key saved on this device'
-                            : 'Receives your messages',
-                      ),
-                      trailing: PopupMenuButton<String>(
-                        enabled: !_busy,
-                        onSelected: (value) {
-                          switch (value) {
-                            case 'key':
-                              _showText(
-                                'Public key — ${friend.name}',
-                                friend.publicKey,
-                              );
-                            case 'rename':
-                              _rename(friend);
-                            case 'delete':
-                              _remove(friend);
-                          }
-                        },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
-                            value: 'key',
-                            child: Text('Show public key'),
-                          ),
-                          PopupMenuItem(value: 'rename', child: Text('Rename')),
-                          PopupMenuItem(value: 'delete', child: Text('Delete')),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
+      );
+      if (replace != true || !mounted) return;
+    }
+    await _run(() => widget.repository.setPeerKey(friend, value));
   }
 
   @override
-  Widget build(BuildContext context) => DefaultTabController(
-    length: 2,
-    child: Scaffold(
-      appBar: AppBar(
-        title: const Text('Friends'),
-        actions: [
-          PopupMenuButton<String>(
-            enabled: !_busy,
-            onSelected: (value) => _backup(value == 'restore'),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'backup', child: Text('Encrypted backup')),
-              PopupMenuItem(value: 'restore', child: Text('Restore backup')),
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Text('Friends'),
+      actions: [
+        PopupMenuButton<String>(
+          enabled: !_busy,
+          onSelected: (value) => _backup(value == 'restore'),
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'backup', child: Text('Encrypted backup')),
+            PopupMenuItem(value: 'restore', child: Text('Restore backup')),
+          ],
+        ),
+      ],
+    ),
+    body: ListenableBuilder(
+      listenable: widget.repository,
+      builder: (_, _) => Column(
+        children: [
+          if (_busy) const LinearProgressIndicator(),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: FilledButton.icon(
+              onPressed: _busy ? null : _add,
+              icon: const Icon(Icons.person_add),
+              label: const Text('Add friend'),
+            ),
+          ),
+          Expanded(
+            child: widget.repository.friends.isEmpty
+                ? const Center(
+                    child: Text('Add a friend, then exchange public keys.'),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    itemCount: widget.repository.friends.length,
+                    itemBuilder: (_, i) {
+                      final friend = widget.repository.friends[i];
+                      return _FriendCard(
+                        key: ValueKey(friend.id),
+                        friend: friend,
+                        busy: _busy,
+                        onShare: (context) => _share(friend, context),
+                        onCopy: () => _run(() async {
+                          final messenger = ScaffoldMessenger.of(context);
+                          await Clipboard.setData(
+                            ClipboardData(text: friend.publicKey),
+                          );
+                          if (mounted) {
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Public key copied. Send it to this friend.',
+                                ),
+                              ),
+                            );
+                          }
+                        }),
+                        onSave: (value) => _acceptKey(friend, value),
+                        onRename: () => _rename(friend),
+                        onDelete: () => _remove(friend),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _FriendCard extends StatefulWidget {
+  final FriendKey friend;
+  final bool busy;
+  final void Function(BuildContext) onShare;
+  final VoidCallback onCopy, onRename, onDelete;
+  final void Function(String) onSave;
+  const _FriendCard({
+    super.key,
+    required this.friend,
+    required this.busy,
+    required this.onShare,
+    required this.onCopy,
+    required this.onSave,
+    required this.onRename,
+    required this.onDelete,
+  });
+  @override
+  State<_FriendCard> createState() => _FriendCardState();
+}
+
+class _FriendCardState extends State<_FriendCard> {
+  late final _keyInput = TextEditingController(
+    text: widget.friend.peerPublicKey ?? '',
+  );
+  @override
+  void didUpdateWidget(covariant _FriendCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.friend.peerPublicKey != widget.friend.peerPublicKey) {
+      _keyInput.text = widget.friend.peerPublicKey ?? '';
+    }
+  }
+
+  @override
+  void dispose() {
+    _keyInput.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  widget.friend.name,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              PopupMenuButton<String>(
+                enabled: !widget.busy,
+                onSelected: (value) {
+                  if (value == 'rename') {
+                    widget.onRename();
+                  } else {
+                    widget.onDelete();
+                  }
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'rename', child: Text('Rename')),
+                  PopupMenuItem(value: 'delete', child: Text('Delete')),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Send this public key to your friend so you can read their messages.',
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              Builder(
+                builder: (context) => FilledButton.icon(
+                  onPressed: widget.busy ? null : () => widget.onShare(context),
+                  icon: const Icon(Icons.share),
+                  label: const Text('Share public key'),
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: widget.busy ? null : widget.onCopy,
+                icon: const Icon(Icons.copy),
+                label: const Text('Copy key'),
+              ),
+            ],
+          ),
+          const Divider(height: 32),
+          const Text(
+            'Ask your friend for their public key and paste it here so they can read your messages.',
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _keyInput,
+            enabled: !widget.busy,
+            minLines: 2,
+            maxLines: 4,
+            decoration: const InputDecoration(
+              labelText: 'Friend’s public key',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              FilledButton(
+                onPressed: widget.busy
+                    ? null
+                    : () => widget.onSave(_keyInput.text),
+                child: const Text('Save friend’s key'),
+              ),
+              Text(
+                widget.friend.peerPublicKey == null
+                    ? 'Key not added — this friend cannot read your messages yet.'
+                    : 'Key saved — this friend is included when you send.',
+              ),
             ],
           ),
         ],
-        bottom: const TabBar(
-          tabs: [
-            Tab(text: 'Created by me'),
-            Tab(text: 'Received keys'),
-          ],
-        ),
-      ),
-      body: ListenableBuilder(
-        listenable: widget.repository,
-        builder: (_, _) => Column(
-          children: [
-            if (_busy) const LinearProgressIndicator(),
-            Expanded(child: TabBarView(children: [_list(true), _list(false)])),
-          ],
-        ),
       ),
     ),
   );

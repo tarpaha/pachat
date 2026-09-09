@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pachat_client/crypto/crypto_service.dart';
 import 'package:pachat_client/services/friends_repository.dart';
 import 'package:pachat_client/crypto/block_crypto.dart';
 import 'package:pachat_client/crypto/backup_crypto.dart';
@@ -17,6 +19,60 @@ class MemoryStorage implements PrivateStorage {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'Legacy directions merge into one friend and edits survive reload',
+    () async {
+      final local = await PaCrypto.generate();
+      final peer = await PaCrypto.generate();
+      final disk = MemoryStorage()
+        ..value = jsonEncode({
+          'version': 2,
+          'ownKeys': [],
+          'friends': [
+            FriendKey('Bob', local.publicKeyBase64, local).toJson(),
+            FriendKey('Bob', peer.publicKeyBase64).toJson(),
+          ],
+        });
+      final repository = FriendsRepository(disk);
+      await repository.load();
+      expect(repository.friends, hasLength(1));
+      expect(repository.friends.single.publicKey, local.publicKeyBase64);
+      expect(repository.friends.single.peerPublicKey, peer.publicKeyBase64);
+      expect(jsonDecode(disk.value!)['version'], 3);
+      await repository.restore(
+        jsonEncode({
+          'version': 1,
+          'friends': [FriendKey('Bob', peer.publicKeyBase64).toJson()],
+        }),
+      );
+      expect(repository.friends, hasLength(1));
+      await repository.rename(repository.friends.single, 'Robert');
+      final restarted = FriendsRepository(disk);
+      await restarted.load();
+      expect(restarted.friends.single.name, 'Robert');
+      expect(restarted.friends.single.peerPublicKey, peer.publicKeyBase64);
+      final block = encryptBlock('Together', restarted.received);
+      expect(
+        decryptBlock(block, [
+          FriendKey('Alice', peer.publicKeyBase64, peer),
+        ])!.text,
+        'Together',
+      );
+      await expectLater(
+        restarted.setPeerKey(restarted.friends.single, 'invalid'),
+        throwsA(anything),
+      );
+      expect(restarted.friends.single.peerPublicKey, peer.publicKeyBase64);
+      final restored = FriendsRepository(MemoryStorage());
+      await restored.restore(restarted.exportJson());
+      expect(restored.friends.single.publicKey, local.publicKeyBase64);
+      expect(restored.friends.single.peerPublicKey, peer.publicKeyBase64);
+      await restored.remove(restored.friends.single);
+      expect(restored.decryptionKeys, isEmpty);
+      expect(restored.received, isEmpty);
+    },
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
   test(
     'Legacy profile gains a durable own key; backup merges own keys',
     () async {
