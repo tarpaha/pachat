@@ -323,10 +323,19 @@ class _FriendCard extends StatelessWidget {
                       : 'View / edit friend’s key',
                 ),
               ),
-              Text(
-                friend.peerPublicKey == null
-                    ? 'Key not added — this friend cannot read your messages yet.'
-                    : 'Key saved — this friend is included when you send.',
+              Tooltip(
+                message: friend.peerPublicKey == null
+                    ? 'Friend’s key not added'
+                    : 'Friend’s key saved',
+                child: Icon(
+                  friend.peerPublicKey == null ? Icons.close : Icons.check,
+                  color: friend.peerPublicKey == null
+                      ? Colors.redAccent
+                      : Colors.green,
+                  semanticLabel: friend.peerPublicKey == null
+                      ? 'Friend’s key not added'
+                      : 'Friend’s key saved',
+                ),
               ),
             ],
           ),
