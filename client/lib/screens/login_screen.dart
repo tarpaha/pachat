@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import '../services/chat_service.dart';
-import '../services/friends_repository.dart';
+import '../services/profile_storage.dart';
 import '../services/prefs.dart';
 import 'chat_screen.dart';
 import 'friends_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  final LocalProfile profile;
+  const LoginScreen({super.key, required this.profile});
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
@@ -15,7 +16,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _host = TextEditingController(text: '127.0.0.1');
   final _port = TextEditingController(text: '9000');
   final _form = GlobalKey<FormState>();
-  final _friends = FriendsRepository(DevicePrivateStorage());
+  get _friends => widget.profile.friends;
   bool _busy = false, _loaded = false;
   String? _error;
   @override
@@ -27,7 +28,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _load() async {
     try {
       await _friends.load();
-      final prefs = await Prefs.load();
+      final prefs = await Prefs.load(widget.profile.settings);
       if (!mounted) return;
       _host.text = prefs.host;
       _port.text = '${prefs.port}';
@@ -48,11 +49,16 @@ class _LoginScreenState extends State<LoginScreen> {
     });
     try {
       final host = _host.text.trim(), port = int.parse(_port.text);
-      await Prefs.save(LoginPrefs(host: host, port: port));
+      await Prefs.save(
+        widget.profile.settings,
+        LoginPrefs(host: host, port: port),
+      );
       final service = await ChatService.connect(
         host: host,
         port: port,
         friends: _friends,
+        historyStorage: widget.profile.history('$host:$port'),
+        profileName: widget.profile.name,
       );
       if (!mounted) {
         service.dispose();
@@ -63,6 +69,7 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute<void>(builder: (_) => ChatScreen(service: service)),
       );
       await service.disconnect();
+      service.dispose();
     } catch (e) {
       if (mounted) setState(() => _error = 'Could not connect: $e');
     } finally {
@@ -74,14 +81,14 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _host.dispose();
     _port.dispose();
-    _friends.dispose();
+
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: const Text('PaChat — Connect'),
+      title: Text('PaChat — ${widget.profile.name}'),
       actions: [
         PopupMenuButton<String>(
           enabled: _loaded && !_busy,

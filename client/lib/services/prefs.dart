@@ -1,4 +1,5 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:convert';
+import 'friends_repository.dart';
 
 class LoginPrefs {
   final String host;
@@ -7,18 +8,13 @@ class LoginPrefs {
 }
 
 class Prefs {
-  static Future<LoginPrefs> load() async {
-    final p = await SharedPreferences.getInstance();
-    return LoginPrefs(
-      host: p.getString('host') ?? '127.0.0.1',
-      port: p.getInt('port') ?? 9000,
-    );
+  static Future<LoginPrefs> load(PrivateStorage storage) async {
+    final saved = await storage.read();
+    if (saved == null) return const LoginPrefs(host: '127.0.0.1', port: 9000);
+    final json = jsonDecode(saved) as Map<String, dynamic>;
+    return LoginPrefs(host: json['host'] as String, port: json['port'] as int);
   }
 
-  static Future<void> save(LoginPrefs value) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setString('host', value.host);
-    await p.setInt('port', value.port);
-    await p.remove('nickname');
-  }
+  static Future<void> save(PrivateStorage storage, LoginPrefs value) =>
+      storage.write(jsonEncode({'host': value.host, 'port': value.port}));
 }

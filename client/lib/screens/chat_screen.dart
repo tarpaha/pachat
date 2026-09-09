@@ -57,8 +57,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     widget.service.removeListener(_changed);
     widget.service.friends.removeListener(_changed);
-    widget.service.disconnect();
-    widget.service.dispose();
+
     _input.dispose();
     _scroll.dispose();
     super.dispose();
@@ -73,7 +72,7 @@ class _ChatScreenState extends State<ChatScreen> {
         !_sending;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('PaChat'),
+        title: Text('PaChat — ${service.profileName}'),
         actions: [
           PopupMenuButton<String>(
             onSelected: (_) => Navigator.push(
@@ -103,18 +102,15 @@ class _ChatScreenState extends State<ChatScreen> {
                         final matches = service.friends.created.where(
                           (f) => f.id == entry.friendKey,
                         );
-                        final name = entry.fromSelf
-                            ? 'You'
-                            : matches.isNotEmpty
+                        final name = matches.isNotEmpty
                             ? matches.first.name
                             : 'Unknown source';
-                        final time = entry.timestamp.toLocal();
-                        final clock =
-                            '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+                        final time = entry.timestamp?.toLocal();
+                        final clock = time == null
+                            ? ''
+                            : '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
                         return Align(
-                          alignment: entry.fromSelf
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
+                          alignment: Alignment.centerLeft,
                           child: Card(
                             child: Padding(
                               padding: const EdgeInsets.all(12),
@@ -136,7 +132,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    '$clock${entry.serverId == null ? '' : ' · #${entry.serverId}'}${entry.fromSelf ? ' · ${entry.status}' : ''}',
+                                    '$clock · #${entry.serverId}',
                                     style: Theme.of(
                                       context,
                                     ).textTheme.bodySmall,
@@ -160,6 +156,22 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Text(
                   service.error!,
                   style: const TextStyle(color: Colors.redAccent),
+                ),
+              ),
+            if (service.storageError != null)
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Column(
+                  children: [
+                    Text(
+                      service.storageError!,
+                      style: const TextStyle(color: Colors.amber),
+                    ),
+                    TextButton(
+                      onPressed: service.retrySave,
+                      child: const Text('Retry saving history'),
+                    ),
+                  ],
                 ),
               ),
             if (service.friends.received.isEmpty)

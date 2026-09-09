@@ -2,40 +2,43 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../crypto/block_crypto.dart';
 import '../models/chat_event.dart';
 import '../protocol/messages.dart';
 import 'friends_repository.dart';
 
-class HistoryStorage implements PrivateStorage {
-  final String server;
-  const HistoryStorage(this.server);
-  String get key =>
-      'pachat.history.v1.${blockDigest(server).replaceAll('/', '_').replaceAll('+', '-')}';
-  static const _storage = FlutterSecureStorage();
-  @override
-  Future<String?> read() => _storage.read(key: key);
-  @override
-  Future<void> write(String value) => _storage.write(key: key, value: value);
-}
-
 String _encrypt((String, List<FriendKey>) args) =>
     encryptBlock(args.$1, args.$2);
-DecodedBlock? _decrypt((String, List<FriendKey>) args) =>
-    decryptBlock(args.$1, args.$2);
+List<ChatEntry> _decode((List<ChatEntry>, List<FriendKey>) args) =>
+    args.$1.map((record) {
+      final decoded = decryptBlock(record.block, args.$2);
+      return ChatEntry(
+        serverId: record.serverId,
+        block: record.block,
+        friendKey: decoded?.friendKey,
+        text: decoded?.text,
+        timestamp: decoded?.timestamp,
+      );
+    }).toList();
 
 class ChatService extends ChangeNotifier {
   final FriendsRepository friends;
   final PrivateStorage historyStorage;
+  final String profileName;
   final Socket _socket;
   List<ChatEntry> _entries;
   Future<void> _work = Future.value();
   late final Future<void> _receiving;
-  bool _disconnected = false;
-  bool _disposed = false;
+  bool _disconnected = false, _disposed = false;
   String? error;
-  ChatService._(this.friends, this.historyStorage, this._socket, this._entries);
+  String? storageError;
+  ChatService._(
+    this.friends,
+    this.historyStorage,
+    this._socket,
+    this._entries,
+    this.profileName,
+  );
   List<ChatEntry> get entries => List.unmodifiable(_entries);
   bool get isDisconnected => _disconnected;
 
@@ -43,28 +46,35 @@ class ChatService extends ChangeNotifier {
     required String host,
     required int port,
     required FriendsRepository friends,
-    PrivateStorage? historyStorage,
+    required PrivateStorage historyStorage,
+    String profileName = '',
   }) async {
-    final storage = historyStorage ?? HistoryStorage('$host:$port');
-    final saved = await storage.read();
-    var entries = <ChatEntry>[];
+    final saved = await historyStorage.read();
+    var records = <ChatEntry>[];
     if (saved != null) {
       final data = jsonDecode(saved) as Map<String, dynamic>;
-      if (data['version'] != 1) {
+      if (data['version'] != 2) {
         throw const FormatException('Unsupported history version');
       }
-      entries = (data['entries'] as List)
+      records = (data['blocks'] as List)
           .map((e) => ChatEntry.fromJson(Map<String, dynamic>.from(e)))
-          .map((e) => e.status == 'pending' ? e.uncertain() : e)
           .toList();
     }
+    final entries = await compute(_decode, (records, friends.created));
     final socket = await Socket.connect(
       host,
       port,
       timeout: const Duration(seconds: 5),
     );
     socket.setOption(SocketOption.tcpNoDelay, true);
-    final service = ChatService._(friends, storage, socket, entries);
+    final service = ChatService._(
+      friends,
+      historyStorage,
+      socket,
+      entries,
+      profileName,
+    );
+    friends.addListener(service._friendsChanged);
     service._receiving = service._receive();
     return service;
   }
@@ -79,73 +89,56 @@ class ChatService extends ChangeNotifier {
     return next;
   }
 
-  Future<void> _save(List<ChatEntry> next) async {
-    await historyStorage.write(
-      jsonEncode({
-        'version': 1,
-        'entries': next.map((e) => e.toJson()).toList(),
+  void _friendsChanged() {
+    unawaited(
+      _serial(() async {
+        _entries = await compute(_decode, (_entries, friends.created));
+        _notify();
+      }).catchError((Object e) {
+        error = 'Could not refresh messages: $e';
+        _notify();
       }),
     );
-    _entries = next;
+  }
+
+  Future<void> _persist() async {
+    try {
+      await historyStorage.write(
+        jsonEncode({
+          'version': 2,
+          'blocks': _entries.map((e) => e.toJson()).toList(),
+        }),
+      );
+      storageError = null;
+    } catch (e) {
+      storageError =
+          'History was not saved. Messages remain in this window. $e';
+    }
     _notify();
   }
 
+  Future<void> retrySave() => _serial(_persist);
   Future<void> sendChat(String text) => _serial(() async {
     if (_disconnected) throw StateError('Disconnected');
     if (text.trim().isEmpty) return;
     final block = await compute(_encrypt, (text, friends.received));
     final line = encodePublish(block);
     if (_disconnected) throw StateError('Disconnected');
-    await _save([
-      ..._entries,
-      ChatEntry(
-        digest: blockDigest(block),
-        block: block,
-        text: text,
-        timestamp: DateTime.now(),
-        fromSelf: true,
-        status: 'pending',
-      ),
-    ]);
-    try {
-      _socket.add(utf8.encode(line));
-      await _socket.flush();
-    } catch (_) {
-      _socket.destroy();
-      rethrow;
-    }
+    _socket.add(utf8.encode(line));
+    await _socket.flush();
   });
-
   Future<void> _receive() async {
     try {
       await for (final line in readLines(_socket)) {
         final event = NewBlock.decode(line);
         await _serial(() async {
-          final digest = blockDigest(event.block);
-          final index = _entries.indexWhere((e) => e.digest == digest);
-          if (index >= 0) {
-            if (_entries[index].fromSelf) {
-              final next = List<ChatEntry>.of(_entries);
-              next[index] = next[index].delivered(event.id);
-              await _save(next);
-            }
-            return;
-          }
-          final decoded = await compute(_decrypt, (
-            event.block,
+          final decoded = await compute(_decode, (
+            [ChatEntry(serverId: event.id, block: event.block)],
             friends.created,
           ));
-          await _save([
-            ..._entries,
-            ChatEntry(
-              digest: digest,
-              block: event.block,
-              serverId: event.id,
-              friendKey: decoded?.friendKey,
-              text: decoded?.text,
-              timestamp: decoded?.timestamp ?? DateTime.now(),
-            ),
-          ]);
+          _entries = [..._entries, ...decoded];
+          _notify();
+          await _persist();
         });
       }
     } catch (e) {
@@ -153,17 +146,6 @@ class ChatService extends ChangeNotifier {
     } finally {
       _disconnected = true;
       _socket.destroy();
-      try {
-        await _serial(
-          () => _save(
-            _entries
-                .map((e) => e.status == 'pending' ? e.uncertain() : e)
-                .toList(),
-          ),
-        );
-      } catch (e) {
-        error = 'Could not save history: $e';
-      }
       _notify();
     }
   }
@@ -171,13 +153,15 @@ class ChatService extends ChangeNotifier {
   Future<void> disconnect() async {
     _disconnected = true;
     _socket.destroy();
-    _notify();
     await _receiving;
+    await _work;
+    _notify();
   }
 
   @override
   void dispose() {
     _disposed = true;
+    friends.removeListener(_friendsChanged);
     _socket.destroy();
     super.dispose();
   }

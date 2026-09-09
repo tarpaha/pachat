@@ -1,8 +1,8 @@
 # PaChat client
 
-Flutter client for an opaque block relay. Supported project targets: Windows and Android.
+Flutter client for an opaque block relay. Project targets: Windows and Android.
 
-## Run
+## Run and select a profile
 
 From `client/`:
 
@@ -11,51 +11,65 @@ flutter pub get
 flutter run -d windows
 ```
 
-Start the Rust server separately (see `../server/README.md`). Connect to its host and port; the default is `127.0.0.1:9000`. There is no nickname, registration, or presence list. On Android, use the server machine's reachable address, not the phone's localhost.
+The first screen lists local profiles. Enter `Alice` and choose **Create / open profile**. Open another application window and choose `Bob`. Each profile has its own friends, keys, server settings and history. Select the same profile on the next launch to recover its saved friends. Names are case-insensitive. Use Back from the connection screen to switch profiles.
+
+Only one window can use a given profile at a time. A held file lock is released on closing the profile or exiting the process. Different profiles can run concurrently against the same server. Profiles are local organizational identities, not password-protected accounts; processes running as the same OS user can access their storage.
+
+Start the Rust server separately (see `../server/README.md`). Default connection: `127.0.0.1:9000`. Profiles and their names are never sent to the server. There is no registration or presence list. On Android, use the server machine's reachable address, not the phone's localhost.
 
 ## Exchange keys
 
 1. Open the menu → Friends → Created by me → Create friend. Enter the friend's local name.
 2. Show and copy that entry's public key. Send it to that friend through another channel.
-3. The friend opens Received keys → Import public key and imports your key with a local label.
+3. The friend opens Received keys → Import public key in their own profile and imports your key with a local label.
 4. Repeat in the other direction to enable replies.
 
 Every outgoing message is encrypted separately for **all** received public keys, then published as one block. Each created friend has a separate RSA-2048 key pair. RSA-OAEP-SHA256 wraps a fresh AES-256 key for each copy; AES-GCM encrypts the payload with a fresh 12-byte nonce and 16-byte tag. Key generation and message crypto run outside the UI isolate.
 
 Decryption selects the local friend entry and therefore its display name. Possession of a public key permits anyone to encrypt for that entry: this is not cryptographic proof of the sender's identity. There are no signatures in this prototype.
 
-Friends are accessible from the connection screen too. Lists and private keys are stored with `flutter_secure_storage`, separately from host/port preferences. Failed key writes do not update the in-memory friend list. Loading errors are shown rather than silently replacing saved keys. Android automatic backup is disabled for the application.
+## Local storage
+
+Profiles live under the platform application-support directory, in `profiles/<hash-of-name>/`.
+
+- Windows: each profile's friends and RSA private keys are protected with Windows DPAPI in `friends.dpapi`. The old plugin's shared `flutter_secure_storage.dat` file is not used. Writes go to a temporary file, are flushed, and then renamed into place. Failed decryption does not delete the file.
+- Android: `flutter_secure_storage` uses a separate storage namespace for each profile, backed by Android key protection. Automatic Android backup is disabled.
+- Settings and received history are separate files inside the profile folder. History also distinguishes the configured server host and port.
+- History format: `{"version":2,"blocks":[{"id":1,"block":"..."}]}`. It contains only original server IDs and encrypted block strings, with no cached plaintext, friend identity or timestamp.
+- Incoming text is decrypted again with the selected profile's keys when loading history or changing friends. Decoded text exists only in memory.
+- Failed history writes show a warning and a **Retry saving history** button. The TCP connection stays open and blocks stay in memory. Subsequent saves retry the full received history. Closing the window before a successful retry can lose unsaved blocks.
+
+Old shared storage is left untouched and is not automatically imported into a named profile. To keep friends from an older installation, export an encrypted friends backup there and restore it into the intended profile. Old plaintext history is not imported.
 
 ## Backups
 
-Friends → menu → Encrypted backup. Enter a password of at least 12 characters and save the resulting encrypted text somewhere safe. The backup contains both lists, including private keys. It uses PBKDF2-HMAC-SHA256 (600,000 iterations, random salt) and AES-256-GCM.
+Friends → menu → Encrypted backup. Enter a password of at least 12 characters and save the encrypted text somewhere safe. The backup contains both friend lists, including private keys. It uses PBKDF2-HMAC-SHA256 (600,000 iterations, random salt) and AES-256-GCM.
 
-Restore backup accepts the saved text and password and merges missing keys, preserving existing entries. The backup does not include chat history. Deleting a created friend removes its private key from the active list; keep a backup if you need to decrypt blocks for that key again.
+Restore backup merges missing keys into the current profile, preserving existing entries. Backups do not include history. Without a matching private key, a saved block displays as unknown; restoring the key makes matching blocks readable again.
 
 ## Chat behavior
 
-- New blocks arrive only while connected; there is no server history request or automatic retry.
-- Undecryptable or malformed encrypted content appears as an unknown message from an unknown source.
-- Local history, including unknown blocks and own outgoing messages, survives sessions and is scoped to the configured host and port.
-- An outgoing entry starts as `pending`; receipt of the identical block changes it to `stored` with the server ID. This means saved in server memory, not read by a friend.
-- Disconnection makes unresolved outgoing entries `unconfirmed`. Identical block bytes are deduplicated using a local SHA-256 digest.
-- Server IDs restart after server restart. They are display metadata, not the local deduplication key.
+- New blocks arrive only while connected; there is no server history request or automatic resend.
+- Only blocks received in `new_block` are added to history. There is no separate outgoing history or outgoing status.
+- The sender receives its own block too. If none of its private keys can decrypt it, it appears as unknown, just like any other undecryptable block.
+- Unknown or malformed encrypted content never exposes message text.
+- Server IDs restart after server restart; they are not treated as globally unique.
 - Maximum plaintext: 16 KiB; maximum recipients: 256.
 
-This is a test implementation: the server keeps an unbounded in-memory log and client history is rewritten as an encrypted document. There is no history pagination, forward secrecy, metadata anonymity, or multi-device synchronization.
+This is a test implementation: the server keeps an unbounded in-memory log and client history rewrites its block list. There is no history pagination, forward secrecy, metadata anonymity, or multi-device synchronization.
 
 ## Checks
 
 ```sh
 flutter analyze
 flutter test
-flutter build windows --debug
+flutter build windows --release
 ```
 
-For the real Rust/Flutter integration test, build the server first and pass the executable's absolute path:
+For the real Rust/Flutter integration test, build the server and pass the executable's absolute path:
 
 ```sh
 flutter test --dart-define=PACHAT_SERVER_BIN=C:/code/pachat/server/target/debug/pachat-server.exe
 ```
 
-Without that define, only the real-server test is skipped. Tests cover key persistence, separate recipients, backup recovery, failed writes, line framing, unknown blocks, echo deduplication, local history, and the friends menu.
+Without that define the real-server test is skipped. Windows profile tests exercise actual DPAPI files, persistence, profile exclusion and preservation of corrupt files. Network tests cover encrypted exchange, raw-only history, reopening with and without matching keys, and a failed history write without disconnection.

@@ -94,18 +94,26 @@ void main() {
         () =>
             b.entries.length == 1 &&
             c.entries.length == 1 &&
-            a.entries.single.status == 'stored',
+            a.entries.length == 1,
       );
       expect(b.entries.single.text, 'Hello Bob 🔐');
       expect(b.entries.single.friendKey, bob.created.single.id);
       expect(c.entries.single.text, isNull);
       expect(a.entries, hasLength(1));
       expect(a.entries.single.serverId, 1);
+      expect(aliceDisk.value!.contains('Hello Bob'), isFalse);
+      expect(aliceDisk.value!.contains('friendKey'), isFalse);
+      expect(a.entries.single.text, isNull);
+      aliceDisk.fail = true;
       await b.sendChat('Привет, Алиса');
-      await until(
-        () => a.entries.length == 2 && b.entries.last.status == 'stored',
-      );
+      await until(() => a.entries.length == 2 && b.entries.length == 2);
       expect(a.entries.last.text, 'Привет, Алиса');
+      expect(a.isDisconnected, isFalse);
+      expect(a.storageError, isNotNull);
+      aliceDisk.fail = false;
+      await a.retrySave();
+      expect(a.storageError, isNull);
+      expect(aliceDisk.value!.contains('Привет'), isFalse);
       final raw = await Socket.connect('127.0.0.1', port);
       raw.add(utf8.encode(encodePublish('invalid encrypted payload')));
       await raw.flush();
@@ -124,6 +132,15 @@ void main() {
       });
       expect(restored.entries, hasLength(3));
       expect(restored.entries[1].text, 'Привет, Алиса');
+      final noKeys = await ChatService.connect(
+        host: '127.0.0.1',
+        port: port,
+        friends: FriendsRepository(MemoryStorage()),
+        historyStorage: aliceDisk,
+      );
+      expect(noKeys.entries.every((e) => e.text == null), isTrue);
+      await noKeys.disconnect();
+      noKeys.dispose();
       final empty = await ChatService.connect(
         host: '127.0.0.1',
         port: port,

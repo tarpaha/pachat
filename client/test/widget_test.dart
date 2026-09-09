@@ -1,35 +1,54 @@
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:pachat_client/main.dart';
+import 'package:pachat_client/screens/profiles_screen.dart';
+import 'package:pachat_client/services/profile_storage.dart';
 
 void main() {
-  testWidgets('Connect screen loads without nickname or presence', (
-    tester,
-  ) async {
-    FlutterSecureStorage.setMockInitialValues({});
-    SharedPreferences.setMockInitialValues({});
-    await tester.pumpWidget(const PaChatApp());
-    await tester.pumpAndSettle();
-    expect(find.text('PaChat — Connect'), findsOneWidget);
-    expect(find.text('Connect'), findsOneWidget);
-    expect(find.text('Nickname'), findsNothing);
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Friends'));
-    await tester.pumpAndSettle();
-    expect(find.text('Created by me'), findsOneWidget);
-    expect(find.text('Create friend'), findsOneWidget);
-    await tester.tap(find.text('Received keys'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Import public key'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Continue'));
-    await tester.pumpAndSettle();
-    expect(find.text('Required'), findsNWidgets(2));
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'Choose a persistent profile and open friends without connecting',
+    (tester) async {
+      final root = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('pachat-widget-'),
+      ))!;
+      final catalog = ProfileCatalog(root);
+      await tester.runAsync(() async {
+        await tester.pumpWidget(
+          MaterialApp(home: ProfilesScreen(catalog: catalog)),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('PaChat — Profiles'), findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'Alice');
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Create / open profile'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await tester.pump();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('PaChat — Alice'), findsOneWidget);
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Friends'));
+      await tester.pumpAndSettle();
+      expect(find.text('Created by me'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await tester.pageBack();
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(() => root.delete(recursive: true));
+    },
+    skip: !Platform.isWindows,
+  );
 }

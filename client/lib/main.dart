@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import 'screens/login_screen.dart';
+import 'screens/profiles_screen.dart';
 
 void main() {
   runApp(const PaChatApp());
@@ -22,7 +22,7 @@ class PaChatApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
       ),
-      home: const LoginScreen(),
+      home: const ProfilesScreen(),
     );
   }
 }

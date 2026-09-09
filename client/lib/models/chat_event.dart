@@ -1,61 +1,18 @@
 class ChatEntry {
-  final String digest;
+  final int serverId;
   final String block;
-  final int? serverId;
   final String? friendKey;
   final String? text;
-  final DateTime timestamp;
-  final bool fromSelf;
-  final String status;
+  final DateTime? timestamp;
   const ChatEntry({
-    required this.digest,
+    required this.serverId,
     required this.block,
-    this.serverId,
     this.friendKey,
     this.text,
-    required this.timestamp,
-    this.fromSelf = false,
-    this.status = 'received',
+    this.timestamp,
   });
-
-  ChatEntry delivered(int id) => ChatEntry(
-    digest: digest,
-    block: block,
-    serverId: id,
-    friendKey: friendKey,
-    text: text,
-    timestamp: timestamp,
-    fromSelf: fromSelf,
-    status: 'stored',
-  );
-  ChatEntry uncertain() => ChatEntry(
-    digest: digest,
-    block: block,
-    serverId: serverId,
-    friendKey: friendKey,
-    text: text,
-    timestamp: timestamp,
-    fromSelf: fromSelf,
-    status: 'unconfirmed',
-  );
-  Map<String, dynamic> toJson() => {
-    'digest': digest,
-    'block': block,
-    'serverId': serverId,
-    'friendKey': friendKey,
-    'text': text,
-    'timestamp': timestamp.toIso8601String(),
-    'fromSelf': fromSelf,
-    'status': status,
-  };
-  factory ChatEntry.fromJson(Map<String, dynamic> j) => ChatEntry(
-    digest: j['digest'] as String,
-    block: j['block'] as String,
-    serverId: j['serverId'] as int?,
-    friendKey: j['friendKey'] as String?,
-    text: j['text'] as String?,
-    timestamp: DateTime.parse(j['timestamp'] as String),
-    fromSelf: j['fromSelf'] as bool,
-    status: j['status'] as String,
-  );
+  // Only the original server record is persisted. Decrypted fields are ephemeral.
+  Map<String, dynamic> toJson() => {'id': serverId, 'block': block};
+  factory ChatEntry.fromJson(Map<String, dynamic> json) =>
+      ChatEntry(serverId: json['id'] as int, block: json['block'] as String);
 }
