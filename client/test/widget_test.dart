@@ -14,7 +14,7 @@ void main() {
       ))!;
       final catalog = ProfileCatalog(root);
       await tester.runAsync(() async {
-        final profile = await catalog.open('Alice');
+        final profile = await catalog.openDeviceProfile();
         await profile.close();
         await tester.pumpWidget(
           MaterialApp(home: DeviceProfileScreen(catalog: catalog)),
@@ -25,6 +25,8 @@ void main() {
       });
       await tester.pumpAndSettle();
       expect(find.text('Connect'), findsOneWidget);
+      expect(find.text('PaChat'), findsOneWidget);
+      expect(find.text('PaChat — default'), findsNothing);
       expect(find.text('Create / open profile'), findsNothing);
       expect(find.byType(BackButton), findsNothing);
       expect(tester.takeException(), isNull);

@@ -7,7 +7,12 @@ import 'friends_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   final LocalProfile profile;
-  const LoginScreen({super.key, required this.profile});
+  final bool showProfileName;
+  const LoginScreen({
+    super.key,
+    required this.profile,
+    this.showProfileName = true,
+  });
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
@@ -58,7 +63,7 @@ class _LoginScreenState extends State<LoginScreen> {
         port: port,
         friends: _friends,
         historyStorage: widget.profile.history('$host:$port'),
-        profileName: widget.profile.name,
+        profileName: widget.showProfileName ? widget.profile.name : '',
       );
       if (!mounted) {
         service.dispose();
@@ -88,7 +93,9 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(
-      title: Text('PaChat — ${widget.profile.name}'),
+      title: Text(
+        widget.showProfileName ? 'PaChat — ${widget.profile.name}' : 'PaChat',
+      ),
       actions: [
         PopupMenuButton<String>(
           enabled: _loaded && !_busy,

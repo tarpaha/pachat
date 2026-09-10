@@ -46,7 +46,7 @@ class _DeviceProfileScreenState extends State<DeviceProfileScreen> {
   @override
   Widget build(BuildContext context) {
     final profile = _profile;
-    if (profile != null) return LoginScreen(profile: profile);
+    if (profile != null) return LoginScreen(profile: profile, showProfileName: false);
     return Scaffold(
       appBar: AppBar(title: const Text('PaChat')),
       body: Center(

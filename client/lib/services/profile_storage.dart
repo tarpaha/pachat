@@ -79,50 +79,16 @@ class ProfileCatalog {
     return names;
   }
 
-  Future<LocalProfile> openDeviceProfile() async {
-    final selection = AtomicFileStorage(File('${root.path}/device.json'));
-    final saved = await selection.read();
-    String name;
-    if (saved != null) {
-      name = (jsonDecode(saved) as Map<String, dynamic>)['name'] as String;
-    } else {
-      final existing = await names();
-      name = existing.isEmpty ? 'My profile' : existing.first;
-      await selection.write(jsonEncode({'name': name}));
-    }
-    return open(name);
-  }
+  Future<LocalProfile> openDeviceProfile() => open('default');
 
   Future<void> delete(String name) async {
     final id = storageId(name.trim().toLowerCase());
     final directory = Directory('${root.path}/$id');
-    if (!await directory.exists()) return;
-    if (!LocalProfile.active.add(directory.absolute.path)) {
-      throw StateError('Profile is already open');
+    if (!Platform.isWindows) {
+      await ProfileKeysStorage(id, directory).secure.delete(key: 'friends.$id');
     }
-    RandomAccessFile? lock;
-    try {
-      lock = await File(
-        '${directory.path}/session.lock',
-      ).open(mode: FileMode.append);
-      await lock.lock(FileLock.exclusive);
-      if (!Platform.isWindows) {
-        await ProfileKeysStorage(
-          id,
-          directory,
-        ).secure.delete(key: 'friends.$id');
-      }
-      await for (final entry in directory.list()) {
-        if (entry.uri.pathSegments.last == 'session.lock') continue;
-        await entry.delete(recursive: true);
-      }
-      await lock.close();
-      lock = null;
-      await File('${directory.path}/session.lock').delete();
-      await directory.delete();
-    } finally {
-      await lock?.close();
-      LocalProfile.active.remove(directory.absolute.path);
+    if (await directory.exists()) {
+      await directory.delete(recursive: true);
     }
   }
 
@@ -132,42 +98,26 @@ class ProfileCatalog {
     final id = storageId(name.toLowerCase());
     final directory = Directory('${root.path}/$id');
     await directory.create(recursive: true);
-    if (!LocalProfile.active.add(directory.absolute.path)) {
-      throw StateError('Profile is already open');
+    final meta = AtomicFileStorage(File('${directory.path}/profile.json'));
+    final previous = await meta.read();
+    if (previous == null) {
+      await meta.write(jsonEncode({'name': name}));
+    } else {
+      name = (jsonDecode(previous) as Map<String, dynamic>)['name'] as String;
     }
-    RandomAccessFile? lock;
-    try {
-      lock = await File(
-        '${directory.path}/session.lock',
-      ).open(mode: FileMode.append);
-      await lock.lock(FileLock.exclusive);
-      final meta = AtomicFileStorage(File('${directory.path}/profile.json'));
-      final previous = await meta.read();
-      if (previous == null) {
-        await meta.write(jsonEncode({'name': name}));
-      } else {
-        name = (jsonDecode(previous) as Map<String, dynamic>)['name'] as String;
-      }
-      final friends = FriendsRepository(ProfileKeysStorage(id, directory));
-      await friends.load();
-      await friends.ensureOwnKey();
-      return LocalProfile(name, directory, friends, lock);
-    } catch (e) {
-      await lock?.close();
-      LocalProfile.active.remove(directory.absolute.path);
-      rethrow;
-    }
+    final friends = FriendsRepository(ProfileKeysStorage(id, directory));
+    await friends.load();
+    await friends.ensureOwnKey();
+    return LocalProfile(name, directory, friends);
   }
 }
 
 class LocalProfile {
-  static final active = <String>{};
   final String name;
   final Directory directory;
   final FriendsRepository friends;
-  final RandomAccessFile _lock;
   bool _closed = false;
-  LocalProfile(this.name, this.directory, this.friends, this._lock);
+  LocalProfile(this.name, this.directory, this.friends);
   PrivateStorage history(String server) => AtomicFileStorage(
     File('${directory.path}/history-${storageId(server)}.json'),
   );
@@ -178,7 +128,5 @@ class LocalProfile {
     _closed = true;
     await friends.flush();
     friends.dispose();
-    await _lock.close();
-    active.remove(directory.absolute.path);
   }
 }

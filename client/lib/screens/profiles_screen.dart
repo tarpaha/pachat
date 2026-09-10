@@ -53,10 +53,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       );
     } catch (e) {
       if (mounted) {
-        setState(
-          () => _error =
-              'Could not open profile. It may already be open in another window. $e',
-        );
+        setState(() => _error = 'Could not open profile: $e');
       }
     } finally {
       await profile?.close();
@@ -97,10 +94,7 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
       await _load();
     } catch (e) {
       if (mounted) {
-        setState(
-          () => _error =
-              'Could not delete profile. Close it in other windows first. $e',
-        );
+        setState(() => _error = 'Could not delete profile: $e');
       }
     } finally {
       if (mounted) setState(() => _busy = false);

@@ -72,7 +72,11 @@ class _ChatScreenState extends State<ChatScreen> {
         !_sending;
     return Scaffold(
       appBar: AppBar(
-        title: Text('PaChat — ${service.profileName}'),
+        title: Text(
+          service.profileName.isEmpty
+              ? 'PaChat'
+              : 'PaChat — ${service.profileName}',
+        ),
         actions: [
           PopupMenuButton<String>(
             onSelected: (_) => Navigator.push(
