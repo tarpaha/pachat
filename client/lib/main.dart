@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
 
 import 'screens/profiles_screen.dart';
+import 'screens/device_profile_screen.dart';
 
 void main() {
   runApp(const PaChatApp());
@@ -22,7 +24,9 @@ class PaChatApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
       ),
-      home: const ProfilesScreen(),
+      home: Platform.isAndroid
+          ? const DeviceProfileScreen()
+          : const ProfilesScreen(),
     );
   }
 }

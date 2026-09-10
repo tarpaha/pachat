@@ -2,9 +2,41 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:pachat_client/screens/profiles_screen.dart';
+import 'package:pachat_client/screens/device_profile_screen.dart';
 import 'package:pachat_client/services/profile_storage.dart';
 
 void main() {
+  testWidgets(
+    'Device opens login directly without profile selection',
+    (tester) async {
+      final root = (await tester.runAsync(
+        () => Directory.systemTemp.createTemp('pachat-device-widget-'),
+      ))!;
+      final catalog = ProfileCatalog(root);
+      await tester.runAsync(() async {
+        final profile = await catalog.open('Alice');
+        await profile.close();
+        await tester.pumpWidget(
+          MaterialApp(home: DeviceProfileScreen(catalog: catalog)),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await tester.pump();
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Connect'), findsOneWidget);
+      expect(find.text('Create / open profile'), findsNothing);
+      expect(find.byType(BackButton), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.runAsync(() async {
+        await tester.pumpWidget(const SizedBox());
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await root.delete(recursive: true);
+      });
+    },
+    skip: !Platform.isWindows,
+  );
+
   testWidgets(
     'Choose a persistent profile and open friends without connecting',
     (tester) async {

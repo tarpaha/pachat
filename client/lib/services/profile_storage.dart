@@ -79,6 +79,53 @@ class ProfileCatalog {
     return names;
   }
 
+  Future<LocalProfile> openDeviceProfile() async {
+    final selection = AtomicFileStorage(File('${root.path}/device.json'));
+    final saved = await selection.read();
+    String name;
+    if (saved != null) {
+      name = (jsonDecode(saved) as Map<String, dynamic>)['name'] as String;
+    } else {
+      final existing = await names();
+      name = existing.isEmpty ? 'My profile' : existing.first;
+      await selection.write(jsonEncode({'name': name}));
+    }
+    return open(name);
+  }
+
+  Future<void> delete(String name) async {
+    final id = storageId(name.trim().toLowerCase());
+    final directory = Directory('${root.path}/$id');
+    if (!await directory.exists()) return;
+    if (!LocalProfile.active.add(directory.absolute.path)) {
+      throw StateError('Profile is already open');
+    }
+    RandomAccessFile? lock;
+    try {
+      lock = await File(
+        '${directory.path}/session.lock',
+      ).open(mode: FileMode.append);
+      await lock.lock(FileLock.exclusive);
+      if (!Platform.isWindows) {
+        await ProfileKeysStorage(
+          id,
+          directory,
+        ).secure.delete(key: 'friends.$id');
+      }
+      await for (final entry in directory.list()) {
+        if (entry.uri.pathSegments.last == 'session.lock') continue;
+        await entry.delete(recursive: true);
+      }
+      await lock.close();
+      lock = null;
+      await File('${directory.path}/session.lock').delete();
+      await directory.delete();
+    } finally {
+      await lock?.close();
+      LocalProfile.active.remove(directory.absolute.path);
+    }
+  }
+
   Future<LocalProfile> open(String name) async {
     name = name.trim();
     if (name.isEmpty) throw const FormatException('Enter a profile name');

@@ -67,6 +67,46 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     }
   }
 
+  Future<void> _delete(String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete profile "$name"?'),
+        content: const Text(
+          'This permanently deletes this profile’s friends, private keys, saved messages and settings. Export a key backup first if you want to restore your friends and keys later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _catalog!.delete(name);
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _error =
+              'Could not delete profile. Close it in other windows first. $e',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   void dispose() {
     _name.dispose();
@@ -109,6 +149,11 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
                       ListTile(
                         title: Text(name),
                         leading: const Icon(Icons.person),
+                        trailing: IconButton(
+                          tooltip: 'Delete profile',
+                          icon: const Icon(Icons.delete_outline),
+                          onPressed: _busy ? null : () => _delete(name),
+                        ),
                         onTap: _busy ? null : () => _open(name),
                       ),
                   ],
