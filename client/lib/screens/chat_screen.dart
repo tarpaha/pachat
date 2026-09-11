@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import '../services/chat_service.dart';
 import 'friends_screen.dart';
+import 'options_screen.dart';
+import '../services/friends_repository.dart';
 
 class ChatScreen extends StatefulWidget {
   final ChatService service;
-  const ChatScreen({super.key, required this.service});
+  final PrivateStorage? settings;
+  const ChatScreen({super.key, required this.service, this.settings});
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -79,14 +82,30 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         actions: [
           PopupMenuButton<String>(
-            onSelected: (_) => Navigator.push(
-              context,
-              MaterialPageRoute<void>(
-                builder: (_) => FriendsScreen(repository: service.friends),
-              ),
-            ),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'friends', child: Text('Friends')),
+            onSelected: (value) async {
+              if (value == 'options') {
+                final changed = await Navigator.push<bool>(
+                  context,
+                  MaterialPageRoute<bool>(
+                    builder: (_) => OptionsScreen(storage: widget.settings!),
+                  ),
+                );
+                if (changed == true && context.mounted) {
+                  Navigator.pop(context, true);
+                }
+              } else {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute<void>(
+                    builder: (_) => FriendsScreen(repository: service.friends),
+                  ),
+                );
+              }
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'friends', child: Text('Friends')),
+              if (widget.settings != null)
+                const PopupMenuItem(value: 'options', child: Text('Options')),
             ],
           ),
         ],
