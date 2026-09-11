@@ -29,7 +29,7 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scroll.hasClients) {
         _scroll.animateTo(
-          _scroll.position.maxScrollExtent,
+          _scroll.position.minScrollExtent,
           duration: const Duration(milliseconds: 150),
           curve: Curves.easeOut,
         );
@@ -118,10 +118,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   ? const Center(child: Text('New messages will appear here'))
                   : ListView.builder(
                       controller: _scroll,
+                      reverse: true,
                       padding: const EdgeInsets.all(12),
                       itemCount: service.entries.length,
                       itemBuilder: (_, i) {
-                        final entry = service.entries[i];
+                        final entry =
+                            service.entries[service.entries.length - 1 - i];
                         final matches = service.friends.created.where(
                           (f) => f.id == entry.friendKey,
                         );
