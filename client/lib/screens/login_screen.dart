@@ -98,6 +98,9 @@ class _LoginScreenState extends State<LoginScreen> {
           service.dispose();
         }
       } while (reconnect && mounted);
+      if (mounted && widget.showProfileName && Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
     } catch (e) {
       if (mounted) setState(() => _error = 'Could not connect: $e');
     } finally {

@@ -4,8 +4,72 @@ import 'package:flutter/material.dart';
 import 'package:pachat_client/screens/profiles_screen.dart';
 import 'package:pachat_client/screens/device_profile_screen.dart';
 import 'package:pachat_client/services/profile_storage.dart';
+import 'package:pachat_client/services/prefs.dart';
+import 'package:pachat_client/screens/chat_screen.dart';
 
 void main() {
+  testWidgets(
+    'Back from chat closes connection and returns to profiles',
+    (tester) async {
+      late Directory root;
+      late ServerSocket server;
+      final sockets = <Socket>[];
+      var disconnected = false;
+      await tester.runAsync(() async {
+        root = await Directory.systemTemp.createTemp('pachat-back-');
+        server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+        server.listen((socket) {
+          sockets.add(socket);
+          socket.listen((_) {}, onDone: () => disconnected = true);
+        });
+        final profile = await ProfileCatalog(root).open('Alice');
+        await Prefs.save(
+          profile.settings,
+          LoginPrefs(host: '127.0.0.1', port: server.port),
+        );
+        await profile.close();
+      });
+      try {
+        await tester.runAsync(() async {
+          await tester.pumpWidget(
+            MaterialApp(home: ProfilesScreen(catalog: ProfileCatalog(root))),
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        });
+        await tester.pumpAndSettle();
+        await tester.runAsync(() async {
+          await tester.tap(find.text('Alice'));
+          for (var i = 0; i < 30; i++) {
+            await tester.pump();
+            if (find.byType(ChatScreen).evaluate().isNotEmpty) break;
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+          }
+        });
+        await tester.pumpAndSettle();
+        expect(find.byType(ChatScreen), findsOneWidget);
+        await tester.runAsync(() async {
+          await tester.pageBack();
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+        });
+        await tester.pumpAndSettle();
+        expect(find.text('PaChat — Profiles'), findsOneWidget);
+        expect(find.text('Connect'), findsNothing);
+        expect(disconnected, isTrue);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.runAsync(() async {
+          await tester.pumpWidget(const SizedBox());
+          for (final socket in sockets) {
+            socket.destroy();
+          }
+          await server.close();
+          await root.delete(recursive: true);
+        });
+      }
+    },
+    skip: !Platform.isWindows,
+  );
+
   testWidgets(
     'Device opens login directly without profile selection',
     (tester) async {
