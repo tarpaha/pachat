@@ -14,7 +14,7 @@ Or `docker compose up --build`. Default address: `0.0.0.0:9000`.
 
 ## Protocol
 
-UTF-8 JSON, one LF-terminated object per line. Only two message types exist.
+UTF-8 JSON, one LF-terminated object per line. History is requested explicitly.
 
 Client → server:
 
@@ -30,13 +30,13 @@ Server → all currently connected clients:
 
 The server preserves the string value exactly. Flutter uses Base64-encoded JSON containing a version and encrypted copies, but the relay does not inspect that format. No names, public keys, sender IDs, or recipient IDs appear in the transport protocol.
 
-IDs start at 1 and increase in storage order. Saving and broadcasting are ordered together. A `new_block` is emitted only after storage succeeds. Connecting does not replay stored blocks. Disconnecting clients miss subsequent blocks.
+IDs start at 1 and increase in storage order. Saving and broadcasting are ordered together. A `new_block` is emitted only after storage succeeds. Clients request {"type":"history","after_id":123} to receive at most the latest 20 blocks with IDs greater than the cursor, in ascending order, as ordinary new_block events. Use 0 with no saved history. An empty result sends no events. The snapshot and live subscription are updated atomically.
 
 Empty blocks, malformed requests, unsupported operations, storage errors, and lagging broadcast receivers cause connection closure. There is deliberately no third error operation in this prototype.
 
 ## Storage and lifecycle
 
-`BlockStore` owns append and ID allocation. `InMemoryBlockStore` keeps all records until the process exits. `ChatServer::with_store` injects an implementation; storage has no dependency on sockets or friend keys. History retrieval is intentionally absent from the current interface.
+`BlockStore` owns append and ID allocation. `InMemoryBlockStore` keeps all records until the process exits. `ChatServer::with_store` injects an implementation; storage has no dependency on sockets or friend keys. The store also provides bounded history retrieval. IDs reset on process restart: cursors are valid only within the same server lifetime until persistent storage is implemented.
 
 A bounded broadcast queue allows independent clients to receive without waiting for a slow client. A lagging receiver is disconnected rather than silently skipping records. Ctrl+C closes the listener and active connections.
 
@@ -50,4 +50,4 @@ cargo test
 cargo build
 ```
 
-The network test verifies publication without a handshake, delivery to sender and another client, and no history on a new connection. The Flutter client also contains a cross-language integration test; see `../client/README.md`.
+The network test verifies publication without a handshake, delivery to sender and another client, explicit history replay, cursor filtering, and subsequent live delivery. Store tests cover the 20-block limit. The Flutter client also contains a cross-language integration test; see `../client/README.md`.

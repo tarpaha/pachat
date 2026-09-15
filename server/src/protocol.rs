@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
     Publish { block: String },
+    History { after_id: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

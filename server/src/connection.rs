@@ -19,46 +19,43 @@ pub async fn handle(
     let _ = stream.set_nodelay(true);
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
-    let receive = async {
+    let mut line = Vec::new();
+    let run = async {
         loop {
-            let mut line = Vec::new();
-            let count = reader.read_until(b'\n', &mut line).await?;
-            if count == 0 {
-                return Ok::<(), std::io::Error>(());
-            }
-            if line.last() != Some(&b'\n') {
-                break;
-            }
-            let request = serde_json::from_slice(&line);
-            let Ok(Request::Publish { block }) = request else {
-                break;
+            let records = tokio::select! {
+                count = reader.read_until(b'\n', &mut line) => {
+                    if count? == 0 || line.last() != Some(&b'\n') { break; }
+                    let request = serde_json::from_slice::<Request>(&line);
+                    line.clear();
+                    match request {
+                        Ok(Request::Publish { block }) if !block.is_empty() => {
+                            if server.publish(block).await.is_err() { break; }
+                            continue;
+                        }
+                        Ok(Request::History { after_id }) => {
+                            let (records, subscription) = server.history(after_id).await;
+                            events = subscription;
+                            records
+                        }
+                        _ => break,
+                    }
+                }
+                event = events.recv() => {
+                    // Disconnect lagging clients instead of silently losing blocks.
+                    let Ok(record) = event else { break };
+                    vec![record]
+                }
             };
-            if block.is_empty() {
-                break;
+            for record in records {
+                let mut bytes = serde_json::to_vec(&record)?;
+                bytes.push(b'\n');
+                writer.write_all(&bytes).await?;
             }
-            let publish_result = server.publish(block).await;
-            if publish_result.is_err() {
-                break;
-            }
-        }
-        Ok(())
-    };
-    let send = async {
-        // A lagging receiver is disconnected instead of silently losing blocks.
-        loop {
-            let event = events.recv().await;
-            let Ok(record) = event else {
-                break;
-            };
-            let mut bytes = serde_json::to_vec(&record)?;
-            bytes.push(b'\n');
-            writer.write_all(&bytes).await?;
         }
         Ok::<(), std::io::Error>(())
     };
     tokio::select! {
         _ = token.cancelled() => {},
-        _ = receive => {},
-        _ = send => {},
+        _ = run => {},
     }
 }

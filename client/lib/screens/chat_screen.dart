@@ -71,6 +71,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final service = widget.service;
     final canSend =
         !service.isDisconnected &&
+        !service.isConnecting &&
         service.friends.recipients.isNotEmpty &&
         !_sending;
     return Scaffold(
@@ -113,6 +114,7 @@ class _ChatScreenState extends State<ChatScreen> {
       body: SafeArea(
         child: Column(
           children: [
+            if (service.isConnecting) const LinearProgressIndicator(),
             Expanded(
               child: service.entries.isEmpty
                   ? const Center(child: Text('New messages will appear here'))

@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+String encodeHistory(int afterId) =>
+    '${jsonEncode({'type': 'history', 'after_id': afterId})}\n';
+
 String encodePublish(String block) {
   final line = '${jsonEncode({'type': 'publish', 'block': block})}\n';
   return line;

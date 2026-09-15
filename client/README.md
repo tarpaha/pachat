@@ -51,7 +51,7 @@ Restore backup merges missing keys into the current profile, preserving existing
 
 ## Chat behavior
 
-- New blocks arrive only while connected; there is no server history request or automatic resend.
+- Cached history opens before the network connection completes and remains readable if connection fails. On connection, the client requests history after its highest saved ID (or 0): at most the latest 20 newer blocks. Earlier missed blocks are not downloaded automatically. Replies are merged in ID order, ignoring repeated identical ID/block pairs.
 - Only blocks received in `new_block` are added to history. There is no separate outgoing history or outgoing status.
 - The profile generates and securely saves an own RSA pair once. Existing profiles gain this pair on first opening after the update. Its public key is not exposed in the friends UI or sent to the server. Each publication includes a copy encrypted for this key. When the block returns, own keys are tried first; successful decryption displays You on the right. This also works after restarting or restoring the profile backup. Older blocks without a self copy cannot be recovered this way.
 - Unknown or malformed encrypted content never exposes message text.

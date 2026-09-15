@@ -44,6 +44,12 @@ impl ChatServer {
         Ok(())
     }
 
+    pub async fn history(&self, after_id: u64) -> (Vec<NewBlock>, broadcast::Receiver<NewBlock>) {
+        let store = self.store.lock().await;
+        // Snapshot and subscription share the publication lock: no gap or overlap.
+        (store.latest_after(after_id), self.subscribe())
+    }
+
     pub async fn run(self: Arc<Self>, token: CancellationToken) -> io::Result<()> {
         let listener = TcpListener::bind(self.addr).await?;
         println!("Server listening on {}", listener.local_addr()?);
@@ -115,6 +121,14 @@ mod tests {
             )
             .await
             .is_err());
+            c.get_mut().write_all(b"{\"type\":\"history\",\"after_id\":0}\n").await.unwrap();
+            let mut line = String::new();
+            c.read_line(&mut line).await.unwrap();
+            assert_eq!(serde_json::from_str::<NewBlock>(&line).unwrap().id, 1);
+            c.get_mut().write_all(b"{\"type\":\"history\",\"after_id\":1}\n{\"type\":\"publish\",\"block\":\"live\"}\n").await.unwrap();
+            line.clear();
+            c.read_line(&mut line).await.unwrap();
+            assert_eq!(serde_json::from_str::<NewBlock>(&line).unwrap().id, 2);
             token.cancel();
             task.await.unwrap().unwrap();
         })

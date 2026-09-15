@@ -20,6 +20,72 @@ Future<void> until(bool Function() predicate) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
+    'Cached history opens before reply; cursor, ordering and duplicates',
+    () async {
+      final listener = await ServerSocket.bind('127.0.0.1', 0);
+      final accepted = listener.first;
+      final disk = MemoryStorage()
+        ..value = jsonEncode({
+          'version': 2,
+          'blocks': [
+            {'id': 8, 'block': 'cached'},
+          ],
+        });
+      final service = await ChatService.connect(
+        host: '127.0.0.1',
+        port: listener.port,
+        friends: FriendsRepository(MemoryStorage()),
+        historyStorage: disk,
+      );
+      expect(service.entries.single.serverId, 8);
+      final peer = await accepted;
+      addTearDown(() async {
+        peer.destroy();
+        await service.disconnect();
+        service.dispose();
+        await listener.close();
+      });
+      expect(jsonDecode(await readLines(peer).first), {
+        'type': 'history',
+        'after_id': 8,
+      });
+      for (final id in [10, 9, 9, 11]) {
+        peer.add(
+          utf8.encode(
+            '${jsonEncode({'type': 'new_block', 'id': id, 'block': 'block$id'})}\n',
+          ),
+        );
+      }
+      await peer.flush();
+      await until(() => service.entries.any((e) => e.serverId == 11));
+      await service.retrySave();
+      expect(service.entries.map((e) => e.serverId), [8, 9, 10, 11]);
+      expect((jsonDecode(disk.value!)['blocks'] as List), hasLength(4));
+    },
+  );
+
+  test('Connection failure leaves cached history readable', () async {
+    final listener = await ServerSocket.bind('127.0.0.1', 0);
+    final port = listener.port;
+    await listener.close();
+    final service = await ChatService.connect(
+      host: '127.0.0.1',
+      port: port,
+      friends: FriendsRepository(MemoryStorage()),
+      historyStorage: MemoryStorage()
+        ..value = jsonEncode({
+          'version': 2,
+          'blocks': [
+            {'id': 1, 'block': 'cached'},
+          ],
+        }),
+    );
+    addTearDown(service.dispose);
+    await until(() => service.isDisconnected);
+    expect(service.entries.single.block, 'cached');
+    expect(service.error, isNotNull);
+  });
+  test(
     'Framing handles split Unicode, multiple lines and truncated frames',
     () async {
       final bytes = utf8.encode('привет\nnext\n');
@@ -154,8 +220,8 @@ void main() {
       addTearDown(() {
         empty.dispose();
       });
-      await Future<void>.delayed(const Duration(milliseconds: 150));
-      expect(empty.entries, isEmpty);
+      await until(() => empty.entries.length == 3);
+      expect(empty.entries.first.text, 'Hello Bob 🔐');
     },
     skip: executable.isEmpty
         ? 'Build Rust server and pass --dart-define=PACHAT_SERVER_BIN=<path>'
