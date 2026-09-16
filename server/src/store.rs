@@ -2,6 +2,7 @@ use crate::protocol::NewBlock;
 
 /// Stores opaque blocks. Implementations own ID allocation and persistence.
 pub trait BlockStore: Send {
+    fn database_id(&self) -> &str;
     fn append(&mut self, block: String) -> Result<NewBlock, String>;
     fn latest_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String>;
 }
@@ -14,6 +15,9 @@ pub struct InMemoryBlockStore {
 
 #[cfg(test)]
 impl BlockStore for InMemoryBlockStore {
+    fn database_id(&self) -> &str {
+        "00000000000000000000000000000000"
+    }
     fn latest_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String> {
         let mut records: Vec<_> = self
             .blocks

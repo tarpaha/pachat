@@ -4,6 +4,7 @@ use std::{path::Path, time::Duration};
 
 pub struct SqliteBlockStore {
     connection: Connection,
+    database_id: String,
 }
 
 impl SqliteBlockStore {
@@ -22,14 +23,36 @@ impl SqliteBlockStore {
              CREATE TABLE IF NOT EXISTS blocks (
                  id INTEGER PRIMARY KEY AUTOINCREMENT,
                  block TEXT NOT NULL
-             );",
+             );
+             CREATE TABLE IF NOT EXISTS metadata (
+                 key TEXT PRIMARY KEY,
+                 value TEXT NOT NULL
+             );
+             INSERT OR IGNORE INTO metadata (key, value)
+                 VALUES ('database_id', lower(hex(randomblob(16))));",
             )
             .map_err(|e| e.to_string())?;
-        Ok(Self { connection })
+        let database_id = connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = 'database_id'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if database_id.len() != 32 || !database_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Invalid database ID".into());
+        }
+        Ok(Self {
+            connection,
+            database_id,
+        })
     }
 }
 
 impl BlockStore for SqliteBlockStore {
+    fn database_id(&self) -> &str {
+        &self.database_id
+    }
     fn append(&mut self, block: String) -> Result<NewBlock, String> {
         // The insert's implicit transaction commits before the caller broadcasts.
         self.connection
@@ -69,6 +92,29 @@ impl BlockStore for SqliteBlockStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn database_identity_survives_reopen_and_differs_for_new_databases() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        // Upgrade an existing database without changing its messages.
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection.execute_batch("CREATE TABLE blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, block TEXT NOT NULL); INSERT INTO blocks (block) VALUES ('old');").unwrap();
+        }
+        let id = {
+            let store = SqliteBlockStore::open(&path).unwrap();
+            assert_eq!(store.latest_after(0).unwrap()[0].block, "old");
+            store.database_id().to_owned()
+        };
+        assert_eq!(SqliteBlockStore::open(&path).unwrap().database_id(), id);
+        assert_ne!(
+            SqliteBlockStore::open(&dir.path().join("new.db"))
+                .unwrap()
+                .database_id(),
+            id
+        );
+    }
 
     #[test]
     fn persists_exact_blocks_and_never_reuses_deleted_ids() {

@@ -118,9 +118,8 @@ class LocalProfile {
   final FriendsRepository friends;
   bool _closed = false;
   LocalProfile(this.name, this.directory, this.friends);
-  PrivateStorage history(String server) => AtomicFileStorage(
-    File('${directory.path}/history-${storageId(server)}.json'),
-  );
+  PrivateStorage get history =>
+      AtomicFileStorage(File('${directory.path}/history.json'));
   PrivateStorage get settings =>
       AtomicFileStorage(File('${directory.path}/settings.json'));
   Future<void> close() async {

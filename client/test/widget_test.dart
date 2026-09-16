@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/material.dart';
 import 'package:pachat_client/screens/profiles_screen.dart';
@@ -20,6 +21,11 @@ void main() {
         server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
         server.listen((socket) {
           sockets.add(socket);
+          socket.add(
+            utf8.encode(
+              '${jsonEncode({'type': 'server_info', 'database_id': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'})}\n',
+            ),
+          );
           socket.listen((_) {}, onDone: () => disconnected = true);
         });
         final profile = await ProfileCatalog(root).open('Alice');
@@ -41,7 +47,13 @@ void main() {
           await tester.tap(find.text('Alice'));
           for (var i = 0; i < 30; i++) {
             await tester.pump();
-            if (find.byType(ChatScreen).evaluate().isNotEmpty) break;
+            if (find.byType(ChatScreen).evaluate().isNotEmpty &&
+                !tester
+                    .widget<ChatScreen>(find.byType(ChatScreen))
+                    .service
+                    .isConnecting) {
+              break;
+            }
             await Future<void>.delayed(const Duration(milliseconds: 100));
           }
         });

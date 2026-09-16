@@ -34,8 +34,8 @@ Profiles live under the platform application-support directory, in `profiles/<ha
 
 - Windows: each profile's friends and RSA private keys are protected with Windows DPAPI in `friends.dpapi`. The old plugin's shared `flutter_secure_storage.dat` file is not used. Writes go to a temporary file, are flushed, and then renamed into place. Failed decryption does not delete the file.
 - Android: `flutter_secure_storage` uses a separate storage namespace for each profile, backed by Android key protection. Automatic Android backup is disabled.
-- Settings and received history are separate files inside the profile folder. History also distinguishes the configured server host and port.
-- History format: `{"version":2,"blocks":[{"id":1,"block":"..."}]}`. It contains only original server IDs and encrypted block strings, with no cached plaintext, friend identity or timestamp.
+- Settings and received history are separate files inside the profile folder. `history.json` groups messages by database ID, independently of the configured host and port.
+- History format: `{"version":3,"activeDatabaseId":"<database-id>","databases":{"<database-id>":[{"id":1,"block":"..."}]}}`. It contains only original message IDs and encrypted block strings, with no cached plaintext, friend identity or timestamp. Earlier development history formats are not migrated.
 - Incoming text is decrypted again with the selected profile's keys when loading history or changing friends. Decoded text exists only in memory.
 - Failed history writes show a warning and a **Retry saving history** button. The TCP connection stays open and blocks stay in memory. Subsequent saves retry the full received history. Closing the window before a successful retry can lose unsaved blocks.
 
@@ -51,11 +51,11 @@ Restore backup merges missing keys into the current profile, preserving existing
 
 ## Chat behavior
 
-- Cached history opens before the network connection completes and remains readable if connection fails. On connection, the client requests history after its highest saved ID (or 0): at most the latest 20 newer blocks. Earlier missed blocks are not downloaded automatically. Replies are merged in ID order, ignoring repeated identical ID/block pairs.
+- The last active database's cached history opens before the connection completes and remains readable if connection fails. The server's initial `server_info` selects the matching database cache (empty for a new database); only then does the client request history after that cache's highest message ID (or 0). At most the latest 20 newer blocks are returned. Earlier missed blocks are not downloaded automatically. Replies are merged in ID order, ignoring repeated identical ID/block pairs. Other databases' caches are retained.
 - Only blocks received in `new_block` are added to history. There is no separate outgoing history or outgoing status.
 - The profile generates and securely saves an own RSA pair once. Existing profiles gain this pair on first opening after the update. Its public key is not exposed in the friends UI or sent to the server. Each publication includes a copy encrypted for this key. When the block returns, own keys are tried first; successful decryption displays You on the right. This also works after restarting or restoring the profile backup. Older blocks without a self copy cannot be recovered this way.
 - Unknown or malformed encrypted content never exposes message text.
-- Server IDs persist across restarts when the server uses the same SQLite database. Replacing the database or restoring an older backup can invalidate saved cursors; IDs are not globally unique across independent databases.
+- Both the database ID and message IDs persist across server restarts. A newly created database has a new ID and a separate cache. A copy of an existing database retains its ID. Client and server must both support `server_info`.
 - Maximum plaintext: 16 KiB; maximum 256 friend copies plus one self copy. Sending without imported friends is allowed and creates only the self copy.
 
 This is a test implementation: the server keeps an unbounded SQLite log and client history rewrites its block list. There is no history pagination, forward secrecy, metadata anonymity, or multi-device synchronization.

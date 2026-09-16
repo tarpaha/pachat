@@ -74,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
           host: host,
           port: port,
           friends: _friends,
-          historyStorage: widget.profile.history('$host:$port'),
+          historyStorage: widget.profile.history,
           profileName: widget.showProfileName ? widget.profile.name : '',
         );
         if (!mounted) {

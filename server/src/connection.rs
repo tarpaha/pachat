@@ -21,6 +21,8 @@ pub async fn handle(
     let mut reader = BufReader::new(reader);
     let mut line = Vec::new();
     let run = async {
+        let hello = serde_json::json!({"type": "server_info", "database_id": server.database_id});
+        writer.write_all(format!("{hello}\n").as_bytes()).await?;
         loop {
             let records = tokio::select! {
                 count = reader.read_until(b'\n', &mut line) => {

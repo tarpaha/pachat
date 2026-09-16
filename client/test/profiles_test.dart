@@ -13,7 +13,7 @@ void main() {
       final bob = await catalog.open('Bob');
       final bobKey = bob.friends.ownPublicKeys.single;
       try {
-        await alice.history('server').write('encrypted blocks');
+        await alice.history.write('encrypted blocks');
         await catalog.delete('alice');
         expect(await alice.directory.exists(), isFalse);
         expect(await catalog.names(), ['Bob']);
@@ -57,8 +57,8 @@ void main() {
         await alice.friends.create('Bob');
         final key = alice.friends.created.single.publicKey;
         await bob.friends.importKey('Alice', key);
-        await alice.history('server:9000').write('{"version":2,"blocks":[]}');
-        expect(await bob.history('server:9000').read(), isNull);
+        await alice.history.write('{"version":2,"blocks":[]}');
+        expect(await bob.history.read(), isNull);
         await alice.close();
         final reopened = await catalog.open('Alice');
         expect(reopened.friends.ownPublicKeys.single, ownKey);

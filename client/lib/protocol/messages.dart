@@ -1,5 +1,18 @@
 import 'dart:convert';
 
+String decodeDatabaseId(String line) {
+  final json = jsonDecode(line) as Map<String, dynamic>;
+  final id = json['database_id'];
+  if (json['type'] != 'server_info' ||
+      id is! String ||
+      !RegExp(r'^[0-9a-f]{32}$').hasMatch(id)) {
+    throw const FormatException(
+      'Server did not provide a valid database ID. Update the server.',
+    );
+  }
+  return id;
+}
+
 String encodeHistory(int afterId) =>
     '${jsonEncode({'type': 'history', 'after_id': afterId})}\n';
 

@@ -26,6 +26,14 @@ Docker Compose mounts the named volume `pachat-data` at `/app/data`, owned by th
 
 UTF-8 JSON, one LF-terminated object per line. History is requested explicitly.
 
+The first server response on each connection identifies its database:
+
+```json
+{"type":"server_info","database_id":"9cd12c6aab8b465fafbb7e872e5b510a"}
+```
+
+Clients select the local cache for this ID before sending the history request. Update client and server together; this handshake is required by the client.
+
 Client → server:
 
 ```json
@@ -48,11 +56,13 @@ Empty blocks, malformed requests, unsupported operations, storage errors, and la
 
 `BlockStore` owns append, ID allocation and bounded history retrieval. Production uses `SqliteBlockStore`; `InMemoryBlockStore` is only a test implementation. `ChatServer::with_store` injects storage independently of sockets or friend keys.
 
+The `metadata` table stores a random 128-bit `database_id`, generated once and reused on every restart. A new database gets a new ID; copying a database preserves its ID.
+
 The `blocks` table stores only `id` and the original opaque `block`. SQLite `INTEGER PRIMARY KEY AUTOINCREMENT` keeps committed IDs increasing across restarts and prevents reuse after deleting rows. History uses the primary-key index to select the latest 20 records after the cursor, then returns them in ascending order. There is no automatic history deletion.
 
 WAL mode and `synchronous=FULL` commit each insertion before broadcasting. Blocking database operations run on Tokio's blocking pool, with a shared lock preserving publication and snapshot/subscription ordering. Read/write errors close the affected connection instead of returning misleading history or broadcasting an unsaved block.
 
-For a simple backup, stop the server and copy the entire data directory, including any `-wal`/`-shm` files. Do not copy just the database file while the server is writing; use SQLite's backup API for live backups. A new database, or restoration of an older backup, can invalidate existing client cursors; keep the original database when upgrading. History held only in RAM by older server versions cannot be recovered after those processes exit.
+For a simple backup, stop the server and copy the entire data directory, including any `-wal`/`-shm` files. Do not copy just the database file while the server is writing; use SQLite's backup API for live backups. A new database selects a separate client cache. Restoring an older backup retains the database ID and can invalidate client cursors; rollback recovery is not implemented.
 
 A bounded broadcast queue allows independent clients to receive without waiting for a slow client. A lagging receiver is disconnected rather than silently skipping records. Ctrl+C closes the listener and active connections.
 

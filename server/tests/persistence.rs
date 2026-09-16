@@ -33,7 +33,11 @@ fn start(path: &Path) -> (Server, BufReader<TcpStream>) {
     socket
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
-    (child, BufReader::new(socket))
+    let mut socket = BufReader::new(socket);
+    let info = receive(&mut socket);
+    assert_eq!(info["type"], "server_info");
+    assert_eq!(info["database_id"].as_str().unwrap().len(), 32);
+    (child, socket)
 }
 
 fn send(socket: &mut BufReader<TcpStream>, value: Value) {

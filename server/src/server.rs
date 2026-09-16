@@ -8,6 +8,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 pub struct ChatServer {
+    pub database_id: String,
     addr: SocketAddr,
     store: Arc<Mutex<Box<dyn BlockStore>>>,
     events: broadcast::Sender<NewBlock>,
@@ -16,6 +17,7 @@ pub struct ChatServer {
 impl ChatServer {
     pub fn with_store(addr: SocketAddr, store: Box<dyn BlockStore>) -> Self {
         Self {
+            database_id: store.database_id().to_owned(),
             addr,
             store: Arc::new(Mutex::new(store)),
             events: broadcast::channel(128).0,
@@ -101,6 +103,13 @@ mod tests {
             let task = tokio::spawn(server.clone().serve(listener, token.clone()));
             let mut a = BufReader::new(TcpStream::connect(addr).await.unwrap());
             let mut b = BufReader::new(TcpStream::connect(addr).await.unwrap());
+            for client in [&mut a, &mut b] {
+                let mut line = String::new();
+                client.read_line(&mut line).await.unwrap();
+                let info: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(info["type"], "server_info");
+                assert_eq!(info["database_id"], server.database_id);
+            }
             while server.events.receiver_count() != 2 {
                 tokio::task::yield_now().await;
             }
@@ -117,6 +126,7 @@ mod tests {
                 assert_eq!(event.kind, "new_block");
             }
             let mut c = BufReader::new(TcpStream::connect(addr).await.unwrap());
+            c.read_line(&mut String::new()).await.unwrap();
             assert!(tokio::time::timeout(
                 Duration::from_millis(100),
                 c.read_line(&mut String::new())

@@ -6,6 +6,7 @@ import '../crypto/block_crypto.dart';
 import '../models/chat_event.dart';
 import '../protocol/messages.dart';
 import 'friends_repository.dart';
+import 'history_cache.dart';
 
 String _encrypt((String, List<FriendKey>) args) =>
     encryptBlock(args.$1, args.$2);
@@ -28,6 +29,8 @@ class ChatService extends ChangeNotifier {
   final String profileName;
   Socket? _socket;
   List<ChatEntry> _entries;
+  final HistoryCache _history;
+  bool databaseVerified = false;
   Future<void> _work = Future.value();
   late final Future<void> _receiving;
   final Completer<void> _ready = Completer<void>();
@@ -40,6 +43,7 @@ class ChatService extends ChangeNotifier {
     this.historyStorage,
     this._entries,
     this.profileName,
+    this._history,
   );
   List<ChatEntry> get entries => List.unmodifiable(_entries);
   bool get isDisconnected => _disconnected;
@@ -54,18 +58,9 @@ class ChatService extends ChangeNotifier {
   }) async {
     await friends.ensureOwnKey();
     final saved = await historyStorage.read();
-    var records = <ChatEntry>[];
-    if (saved != null) {
-      final data = jsonDecode(saved) as Map<String, dynamic>;
-      if (data['version'] != 2) {
-        throw const FormatException('Unsupported history version');
-      }
-      records = (data['blocks'] as List)
-          .map((e) => ChatEntry.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
-    }
+    final history = HistoryCache.decode(saved);
     final entries = await compute(_decode, (
-      records,
+      history.preview,
       friends.decryptionKeys,
       friends.ownPublicKeys,
     ));
@@ -74,6 +69,7 @@ class ChatService extends ChangeNotifier {
       historyStorage,
       entries,
       profileName,
+      history,
     );
     friends.addListener(service._friendsChanged);
     service._receiving = service._connectAndReceive(host, port);
@@ -81,6 +77,7 @@ class ChatService extends ChangeNotifier {
   }
 
   Future<void> _connectAndReceive(String host, int port) async {
+    StreamIterator<String>? lines;
     try {
       final socket = await Socket.connect(
         host,
@@ -93,6 +90,24 @@ class ChatService extends ChangeNotifier {
       }
       _socket = socket;
       socket.setOption(SocketOption.tcpNoDelay, true);
+      lines = StreamIterator(readLines(socket));
+      if (!await lines.moveNext().timeout(const Duration(seconds: 5))) {
+        throw const FormatException(
+          'Server closed before providing its database ID',
+        );
+      }
+      final databaseId = decodeDatabaseId(lines.current);
+      await _serial(() async {
+        _entries = await compute(_decode, (
+          _history.databases[databaseId] ?? <ChatEntry>[],
+          friends.decryptionKeys,
+          friends.ownPublicKeys,
+        ));
+        _history.activeDatabaseId = databaseId;
+        databaseVerified = true;
+        _notify();
+        await _persist();
+      });
       final lastId = _entries.fold<int>(
         0,
         (id, e) => e.serverId > id ? e.serverId : id,
@@ -102,12 +117,13 @@ class ChatService extends ChangeNotifier {
       _connecting = false;
       _ready.complete();
       _notify();
-      await _receive();
+      await _receive(lines);
     } catch (e) {
       error = 'Could not connect: $e';
       _disconnected = true;
       _socket?.destroy();
     } finally {
+      await lines?.cancel();
       _connecting = false;
       if (!_ready.isCompleted) _ready.complete();
       _notify();
@@ -142,12 +158,10 @@ class ChatService extends ChangeNotifier {
 
   Future<void> _persist() async {
     try {
-      await historyStorage.write(
-        jsonEncode({
-          'version': 2,
-          'blocks': _entries.map((e) => e.toJson()).toList(),
-        }),
-      );
+      if (databaseVerified) {
+        _history.databases[_history.activeDatabaseId!] = _entries;
+      }
+      await historyStorage.write(_history.encode());
       storageError = null;
     } catch (e) {
       storageError =
@@ -157,20 +171,23 @@ class ChatService extends ChangeNotifier {
   }
 
   Future<void> retrySave() => _serial(_persist);
-  Future<void> sendChat(String text) => _serial(() async {
+  Future<void> sendChat(String text) async {
     await _ready.future;
-    if (_disconnected) throw StateError('Disconnected');
-    if (text.trim().isEmpty) return;
-    final block = await compute(_encrypt, (text, friends.recipients));
-    final line = encodePublish(block);
-    if (_disconnected) throw StateError('Disconnected');
-    _socket!.add(utf8.encode(line));
-    await _socket!.flush();
-  });
-  Future<void> _receive() async {
+    await _serial(() async {
+      if (_disconnected) throw StateError('Disconnected');
+      if (text.trim().isEmpty) return;
+      final block = await compute(_encrypt, (text, friends.recipients));
+      final line = encodePublish(block);
+      if (_disconnected) throw StateError('Disconnected');
+      _socket!.add(utf8.encode(line));
+      await _socket!.flush();
+    });
+  }
+
+  Future<void> _receive(StreamIterator<String> lines) async {
     try {
-      await for (final line in readLines(_socket!)) {
-        final event = NewBlock.decode(line);
+      while (await lines.moveNext()) {
+        final event = NewBlock.decode(lines.current);
         await _serial(() async {
           if (_entries.any(
             (e) => e.serverId == event.id && e.block == event.block,
