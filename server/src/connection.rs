@@ -33,7 +33,8 @@ pub async fn handle(
                             continue;
                         }
                         Ok(Request::History { after_id }) => {
-                            let (records, subscription) = server.history(after_id).await;
+                            let (records, subscription) = server.history(after_id).await
+                                .map_err(std::io::Error::other)?;
                             events = subscription;
                             records
                         }

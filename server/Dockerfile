@@ -14,6 +14,7 @@ FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 
 RUN useradd --system --uid 1000 --user-group --no-create-home pachat
+RUN mkdir -p /app/data && chown pachat:pachat /app/data
 
 COPY --from=builder /build/target/release/pachat-server /usr/local/bin/pachat-server
 

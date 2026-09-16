@@ -1,6 +1,7 @@
 mod connection;
 mod protocol;
 mod server;
+mod sqlite_store;
 mod store;
 
 use std::sync::Arc;
@@ -16,6 +17,9 @@ struct Args {
     host: String,
     #[arg(long, default_value_t = 9000)]
     port: u16,
+    /// SQLite file, relative to the current working directory.
+    #[arg(long, default_value = "data/pachat.db")]
+    database: std::path::PathBuf,
 }
 
 #[tokio::main]
@@ -27,7 +31,22 @@ async fn main() {
         tokio::signal::ctrl_c().await.ok();
         t.cancel();
     });
-    let server = Arc::new(ChatServer::new(&args.host, args.port));
+    let store = match sqlite_store::SqliteBlockStore::open(&args.database) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!(
+                "Could not open database {}: {error}",
+                args.database.display()
+            );
+            std::process::exit(1);
+        }
+    };
+    let server = Arc::new(ChatServer::with_store(
+        format!("{}:{}", args.host, args.port)
+            .parse()
+            .expect("invalid address"),
+        Box::new(store),
+    ));
     if let Err(error) = server.run(token).await {
         eprintln!("Server failed: {error}");
         std::process::exit(1);

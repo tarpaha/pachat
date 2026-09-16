@@ -55,10 +55,10 @@ Restore backup merges missing keys into the current profile, preserving existing
 - Only blocks received in `new_block` are added to history. There is no separate outgoing history or outgoing status.
 - The profile generates and securely saves an own RSA pair once. Existing profiles gain this pair on first opening after the update. Its public key is not exposed in the friends UI or sent to the server. Each publication includes a copy encrypted for this key. When the block returns, own keys are tried first; successful decryption displays You on the right. This also works after restarting or restoring the profile backup. Older blocks without a self copy cannot be recovered this way.
 - Unknown or malformed encrypted content never exposes message text.
-- Server IDs restart after server restart; they are not treated as globally unique.
+- Server IDs persist across restarts when the server uses the same SQLite database. Replacing the database or restoring an older backup can invalidate saved cursors; IDs are not globally unique across independent databases.
 - Maximum plaintext: 16 KiB; maximum 256 friend copies plus one self copy. Sending without imported friends is allowed and creates only the self copy.
 
-This is a test implementation: the server keeps an unbounded in-memory log and client history rewrites its block list. There is no history pagination, forward secrecy, metadata anonymity, or multi-device synchronization.
+This is a test implementation: the server keeps an unbounded SQLite log and client history rewrites its block list. There is no history pagination, forward secrecy, metadata anonymity, or multi-device synchronization.
 
 ## Checks
 

@@ -1,18 +1,20 @@
 use crate::protocol::NewBlock;
 
 /// Stores opaque blocks. Implementations own ID allocation and persistence.
-pub trait BlockStore: Send + Sync {
+pub trait BlockStore: Send {
     fn append(&mut self, block: String) -> Result<NewBlock, String>;
-    fn latest_after(&self, after_id: u64) -> Vec<NewBlock>;
+    fn latest_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String>;
 }
 
+#[cfg(test)]
 #[derive(Default)]
 pub struct InMemoryBlockStore {
     blocks: Vec<NewBlock>,
 }
 
+#[cfg(test)]
 impl BlockStore for InMemoryBlockStore {
-    fn latest_after(&self, after_id: u64) -> Vec<NewBlock> {
+    fn latest_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String> {
         let mut records: Vec<_> = self
             .blocks
             .iter()
@@ -22,7 +24,7 @@ impl BlockStore for InMemoryBlockStore {
             .cloned()
             .collect();
         records.reverse();
-        records
+        Ok(records)
     }
 
     fn append(&mut self, block: String) -> Result<NewBlock, String> {
@@ -46,13 +48,14 @@ mod tests {
     #[test]
     fn history_returns_only_latest_twenty_after_cursor_in_order() {
         let mut store = InMemoryBlockStore::default();
-        assert!(store.latest_after(0).is_empty());
+        assert!(store.latest_after(0).unwrap().is_empty());
         for _ in 0..1000 {
             store.append("opaque".into()).unwrap();
         }
         let ids = |after| {
             store
                 .latest_after(after)
+                .unwrap()
                 .iter()
                 .map(|r| r.id)
                 .collect::<Vec<_>>()

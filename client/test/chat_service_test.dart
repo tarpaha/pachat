@@ -106,11 +106,17 @@ void main() {
   test(
     'Real Rust server: encrypted exchange, unknown block, echo, restart and local history',
     () async {
+      final databaseDir = await Directory.systemTemp.createTemp(
+        'pachat-server-',
+      );
+      addTearDown(() => databaseDir.delete(recursive: true));
       final server = await Process.start(executable, [
         '--host',
         '127.0.0.1',
         '--port',
         '0',
+        '--database',
+        '${databaseDir.path}/pachat.db',
       ]);
       addTearDown(() async {
         server.kill();

@@ -1,7 +1,4 @@
-use crate::{
-    protocol::NewBlock,
-    store::{BlockStore, InMemoryBlockStore},
-};
+use crate::{protocol::NewBlock, store::BlockStore};
 use std::{io, net::SocketAddr, sync::Arc};
 use tokio::{
     net::TcpListener,
@@ -12,22 +9,15 @@ use tokio_util::sync::CancellationToken;
 
 pub struct ChatServer {
     addr: SocketAddr,
-    store: Mutex<Box<dyn BlockStore>>,
+    store: Arc<Mutex<Box<dyn BlockStore>>>,
     events: broadcast::Sender<NewBlock>,
 }
 
 impl ChatServer {
-    pub fn new(host: &str, port: u16) -> Self {
-        Self::with_store(
-            format!("{host}:{port}").parse().expect("invalid address"),
-            Box::new(InMemoryBlockStore::default()),
-        )
-    }
-
     pub fn with_store(addr: SocketAddr, store: Box<dyn BlockStore>) -> Self {
         Self {
             addr,
-            store: Mutex::new(store),
+            store: Arc::new(Mutex::new(store)),
             events: broadcast::channel(128).0,
         }
     }
@@ -38,16 +28,27 @@ impl ChatServer {
 
     pub async fn publish(&self, block: String) -> Result<(), String> {
         // Keep allocation, storage and publication in the same order.
-        let mut store = self.store.lock().await;
-        let record = store.append(block)?;
-        let _ = self.events.send(record);
-        Ok(())
+        let mut store = self.store.clone().lock_owned().await;
+        let events = self.events.clone();
+        tokio::task::spawn_blocking(move || {
+            let record = store.append(block)?;
+            let _ = events.send(record);
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
-    pub async fn history(&self, after_id: u64) -> (Vec<NewBlock>, broadcast::Receiver<NewBlock>) {
-        let store = self.store.lock().await;
+    pub async fn history(
+        &self,
+        after_id: u64,
+    ) -> Result<(Vec<NewBlock>, broadcast::Receiver<NewBlock>), String> {
+        let store = self.store.clone().lock_owned().await;
+        let events = self.events.clone();
         // Snapshot and subscription share the publication lock: no gap or overlap.
-        (store.latest_after(after_id), self.subscribe())
+        tokio::task::spawn_blocking(move || Ok((store.latest_after(after_id)?, events.subscribe())))
+            .await
+            .map_err(|e| e.to_string())?
     }
 
     pub async fn run(self: Arc<Self>, token: CancellationToken) -> io::Result<()> {
@@ -82,6 +83,7 @@ impl ChatServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::InMemoryBlockStore;
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpStream;
