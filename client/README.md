@@ -11,7 +11,9 @@ flutter pub get
 flutter run -d windows
 ```
 
-The first screen lists local profiles. Enter `Alice` and choose **Create / open profile**. Open another application window and choose `Bob`. Each profile has its own friends, keys, server settings and history. Select the same profile on the next launch to recover its saved friends. Names are case-insensitive. Use Back from the connection screen to switch profiles.
+On Windows, the first screen lists local profiles. Enter `Alice` and choose **Create / open profile**. Open another application window and choose `Bob`. Each profile has its own friends, keys, server settings and history. Select the same profile on the next launch to recover its saved friends. Names are case-insensitive. Use Back from the connection screen to switch profiles.
+
+On Android, the app opens a persistent device profile directly, without profile selection. Saved server settings trigger connection automatically. Returning from the chat to the connection screen keeps that profile's session alive while the app process is running.
 
 Use one running owner per profile; simultaneous writers from other windows or isolates are not currently protected by a file lock. Different profiles can run concurrently against the same server. Profiles are local organizational identities, not password-protected accounts; processes running as the same OS user can access their storage.
 
@@ -83,3 +85,27 @@ flutter test --dart-define=PACHAT_SERVER_BIN=C:/code/pachat/server/target/debug/
 ```
 
 Without that define the real-server test is skipped. Windows profile tests exercise actual DPAPI files, persistence, profile isolation and preservation of corrupt files. Tests cover encrypted exchange against the real Rust server, raw-only history, reopening with and without matching keys, failed history writes, migration of legacy gaps, page-resume after disconnection, pre-history live events, headless ingestion and receiving while the device chat screen is closed.
+
+### Android build
+
+The Android debug build was verified with JDK 21. On the development machine, the default Java 25.0.2 failed during Gradle/Kotlin initialization. The following PowerShell commands select the installed JDK for this terminal session; adjust the path to your installation. Run from `client/android/`:
+
+```powershell
+$env:JAVA_HOME = 'C:/Program Files/Eclipse Adoptium/jdk-21.0.3.9-hotspot'
+./gradlew.bat "-Dorg.gradle.java.home=$env:JAVA_HOME" assembleDebug
+```
+
+The APK is written to `client/build/app/outputs/apk/debug/app-debug.apk` (relative to the repository root). This builds the client; it does not install it on a device.
+
+### Verification record — 2026-09-21
+
+For implementation commit `b639077`:
+
+- `flutter analyze`: no issues.
+- Flutter tests including the real Rust server integration: 22 passed.
+- Server formatting check, build and tests: passed (8 unit tests and 1 process-persistence test).
+- Windows release build: passed.
+- Android debug build with JDK 21: passed.
+- An independent reviewing subagent approved the changes before the implementation commit.
+
+These checks include receiving messages after closing the chat screen and recovering history after disconnection. They do not establish delivery while Android has suspended or killed the process: push notifications and a Windows tray are future work. Update the client and server together for the new history protocol.
