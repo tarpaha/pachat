@@ -46,7 +46,7 @@ void main() {
       final peer = await accepted;
       peer.add(
         utf8.encode(
-          '${jsonEncode({'type': 'server_info', 'database_id': databaseA})}\n',
+          '${jsonEncode({'type': 'server_info', 'database_id': databaseA, 'history_version': 2})}\n',
         ),
       );
       addTearDown(() async {
@@ -57,15 +57,25 @@ void main() {
       });
       expect(jsonDecode(await readLines(peer).first), {
         'type': 'history',
-        'after_id': 8,
+        'after_id': 0,
       });
-      for (final id in [10, 9, 9, 11]) {
-        peer.add(
-          utf8.encode(
-            '${jsonEncode({'type': 'new_block', 'id': id, 'block': 'block$id'})}\n',
-          ),
-        );
-      }
+      peer.add(
+        utf8.encode(
+          '${jsonEncode({
+            'type': 'history_page',
+            'blocks': [
+              for (final id in [8, 9, 10, 11]) {'type': 'new_block', 'id': id, 'block': id == 8 ? 'cached' : 'block$id'},
+            ],
+            'after_id': 11,
+            'has_more': false,
+          })}\n',
+        ),
+      );
+      peer.add(
+        utf8.encode(
+          '${jsonEncode({'type': 'new_block', 'id': 11, 'block': 'block11'})}\n',
+        ),
+      );
       await peer.flush();
       await until(() => service.entries.any((e) => e.serverId == 11));
       await service.retrySave();
@@ -110,20 +120,24 @@ void main() {
         try {
           peer.add(
             utf8.encode(
-              '${jsonEncode({'type': 'server_info', 'database_id': id})}\n',
+              '${jsonEncode({'type': 'server_info', 'database_id': id, 'history_version': 2})}\n',
             ),
           );
           await requests.moveNext();
-          expect(
-            jsonDecode(requests.current)['after_id'],
-            id == databaseB ? 0 : 100,
-          );
+          expect(jsonDecode(requests.current)['after_id'], 0);
           expect(service.databaseVerified, isTrue);
           if (id == databaseB) {
             expect(service.entries, isEmpty);
             peer.add(
               utf8.encode(
-                '${jsonEncode({'type': 'new_block', 'id': 1, 'block': 'from B'})}\n',
+                '${jsonEncode({
+                  'type': 'history_page',
+                  'blocks': [
+                    {'type': 'new_block', 'id': 1, 'block': 'from B'},
+                  ],
+                  'after_id': 1,
+                  'has_more': false,
+                })}\n',
               ),
             );
             await until(() => service.entries.isNotEmpty);
@@ -353,6 +367,34 @@ void main() {
       });
       await until(() => empty.entries.length == 3);
       expect(empty.entries.first.text, 'Hello Bob 🔐');
+      final publisher = await Socket.connect('127.0.0.1', port);
+      // More than two history pages published while a is disconnected.
+      for (var id = 4; id <= 208; id++) {
+        publisher.add(utf8.encode(encodePublish('offline-$id')));
+      }
+      await publisher.flush();
+      await until(() => b.entries.length == 208);
+      publisher.destroy();
+      final catchUp = await ChatService.connect(
+        host: '127.0.0.1',
+        port: port,
+        friends: alice,
+        historyStorage: MemoryStorage(),
+      );
+      try {
+        await until(
+          () => !catchUp.isConnecting && catchUp.entries.length == 208,
+        );
+        expect(
+          catchUp.entries.map((entry) => entry.serverId),
+          List.generate(208, (i) => i + 1),
+        );
+        expect(catchUp.entries.first.text, 'Hello Bob 🔐');
+        expect(catchUp.entries.last.block, 'offline-208');
+      } finally {
+        await catchUp.disconnect();
+        catchUp.dispose();
+      }
     },
     skip: executable.isEmpty
         ? 'Build Rust server and pass --dart-define=PACHAT_SERVER_BIN=<path>'

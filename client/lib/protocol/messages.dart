@@ -10,7 +10,46 @@ String decodeDatabaseId(String line) {
       'Server did not provide a valid database ID. Update the server.',
     );
   }
+  if (json['history_version'] != 2) {
+    throw const FormatException(
+      'Server does not support full history. Update the server.',
+    );
+  }
   return id;
+}
+
+class HistoryPage {
+  final List<NewBlock> blocks;
+  final int afterId;
+  final bool hasMore;
+  const HistoryPage(this.blocks, this.afterId, this.hasMore);
+
+  factory HistoryPage.decode(String line, int cursor) {
+    final json = jsonDecode(line) as Map<String, dynamic>;
+    if (json['type'] != 'history_page' ||
+        json['blocks'] is! List ||
+        json['after_id'] is! int ||
+        json['has_more'] is! bool) {
+      throw const FormatException('Invalid history page');
+    }
+    final blocks = (json['blocks'] as List)
+        .map((value) => NewBlock.decode(jsonEncode(value)))
+        .toList();
+    if (blocks.length > 100) {
+      throw const FormatException('Oversized history page');
+    }
+    for (final block in blocks) {
+      if (block.id <= cursor) {
+        throw const FormatException('Unordered history page');
+      }
+      cursor = block.id;
+    }
+    if (json['after_id'] != cursor ||
+        (json['has_more'] == true && blocks.isEmpty)) {
+      throw const FormatException('Invalid history cursor');
+    }
+    return HistoryPage(blocks, cursor, json['has_more'] as bool);
+  }
 }
 
 String encodeHistory(int afterId) =>

@@ -65,15 +65,15 @@ impl BlockStore for SqliteBlockStore {
         })
     }
 
-    fn latest_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String> {
+    fn page_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String> {
         let Ok(after_id) = i64::try_from(after_id) else {
             return Ok(Vec::new());
         };
         let mut statement = self
             .connection
-            .prepare("SELECT id, block FROM blocks WHERE id > ?1 ORDER BY id DESC LIMIT 20")
+            .prepare("SELECT id, block FROM blocks WHERE id > ?1 ORDER BY id ASC LIMIT 100")
             .map_err(|e| e.to_string())?;
-        let mut records = statement
+        let records = statement
             .query_map([after_id], |row| {
                 Ok(NewBlock {
                     kind: "new_block".into(),
@@ -84,7 +84,7 @@ impl BlockStore for SqliteBlockStore {
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
-        records.reverse();
+
         Ok(records)
     }
 }
@@ -104,7 +104,7 @@ mod tests {
         }
         let id = {
             let store = SqliteBlockStore::open(&path).unwrap();
-            assert_eq!(store.latest_after(0).unwrap()[0].block, "old");
+            assert_eq!(store.page_after(0).unwrap()[0].block, "old");
             store.database_id().to_owned()
         };
         assert_eq!(SqliteBlockStore::open(&path).unwrap().database_id(), id);
@@ -131,26 +131,26 @@ mod tests {
                 .unwrap();
         }
         let mut store = SqliteBlockStore::open(&path).unwrap();
-        assert_eq!(store.latest_after(0).unwrap()[0].block, block);
+        assert_eq!(store.page_after(0).unwrap()[0].block, block);
         assert_eq!(store.append("next".into()).unwrap().id, 3);
     }
 
     #[test]
     fn limits_history_and_handles_large_cursors() {
         let mut store = SqliteBlockStore::open(Path::new(":memory:")).unwrap();
-        assert!(store.latest_after(0).unwrap().is_empty());
+        assert!(store.page_after(0).unwrap().is_empty());
         for _ in 0..1000 {
             store.append("opaque".into()).unwrap();
         }
         let ids = |after| {
             store
-                .latest_after(after)
+                .page_after(after)
                 .unwrap()
                 .iter()
                 .map(|r| r.id)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(0), (981..=1000).collect::<Vec<_>>());
+        assert_eq!(ids(0), (1..=100).collect::<Vec<_>>());
         assert_eq!(ids(995), (996..=1000).collect::<Vec<_>>());
         assert!(ids(1000).is_empty());
         assert!(ids(u64::MAX).is_empty());
@@ -169,11 +169,11 @@ mod tests {
             .execute_batch("PRAGMA query_only=ON;")
             .unwrap();
         assert!(store.append("unsaved".into()).is_err());
-        assert!(store.latest_after(0).unwrap().is_empty());
+        assert!(store.page_after(0).unwrap().is_empty());
         store
             .connection
             .execute_batch("PRAGMA query_only=OFF; DROP TABLE blocks;")
             .unwrap();
-        assert!(store.latest_after(0).is_err());
+        assert!(store.page_after(0).is_err());
     }
 }

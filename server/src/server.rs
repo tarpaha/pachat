@@ -48,7 +48,7 @@ impl ChatServer {
         let store = self.store.clone().lock_owned().await;
         let events = self.events.clone();
         // Snapshot and subscription share the publication lock: no gap or overlap.
-        tokio::task::spawn_blocking(move || Ok((store.latest_after(after_id)?, events.subscribe())))
+        tokio::task::spawn_blocking(move || Ok((store.page_after(after_id)?, events.subscribe())))
             .await
             .map_err(|e| e.to_string())?
     }
@@ -89,6 +89,77 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     use tokio::net::TcpStream;
+
+    #[tokio::test]
+    async fn paginated_history_and_concurrent_publications_have_no_gap() {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let server = Arc::new(ChatServer::with_store(
+                addr,
+                Box::new(InMemoryBlockStore::default()),
+            ));
+            for id in 1..=350 {
+                server.publish(format!("block-{id}")).await.unwrap();
+            }
+            let token = CancellationToken::new();
+            let task = tokio::spawn(server.clone().serve(listener, token.clone()));
+            let mut client = BufReader::new(TcpStream::connect(addr).await.unwrap());
+            client.read_line(&mut String::new()).await.unwrap();
+            client
+                .get_mut()
+                .write_all(b"{\"type\":\"history\",\"after_id\":0}\n")
+                .await
+                .unwrap();
+            let publisher = tokio::spawn({
+                let server = server.clone();
+                async move {
+                    for id in 351..=400 {
+                        server.publish(format!("block-{id}")).await.unwrap();
+                    }
+                }
+            });
+            let mut ids = Vec::new();
+            let mut complete = false;
+            while ids.last() != Some(&400) || !complete {
+                let mut line = String::new();
+                assert!(client.read_line(&mut line).await.unwrap() > 0);
+                let event: serde_json::Value = serde_json::from_str(&line).unwrap();
+                if event["type"] == "history_page" {
+                    assert!(!complete);
+                    let blocks = event["blocks"].as_array().unwrap();
+                    assert!(blocks.len() <= 100);
+                    ids.extend(blocks.iter().map(|b| b["id"].as_u64().unwrap()));
+                    complete = event["has_more"] == false;
+                } else if complete {
+                    ids.push(event["id"].as_u64().unwrap());
+                }
+                // Live events preceding the request are replayed by history.
+            }
+            assert_eq!(ids, (1..=400).collect::<Vec<_>>());
+            publisher.await.unwrap();
+            client
+                .get_mut()
+                .write_all(b"{\"type\":\"history\",\"after_id\":300}\n")
+                .await
+                .unwrap();
+            for more in [true, false] {
+                let mut line = String::new();
+                client.read_line(&mut line).await.unwrap();
+                let page: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(page["has_more"], more);
+                assert_eq!(
+                    page["blocks"].as_array().unwrap().len(),
+                    if more { 100 } else { 0 }
+                );
+                assert_eq!(page["after_id"], 400);
+            }
+            token.cancel();
+            task.await.unwrap().unwrap();
+        })
+        .await
+        .unwrap();
+    }
 
     #[tokio::test]
     async fn publishes_to_sender_and_other_client_without_handshake_or_history() {
@@ -136,8 +207,16 @@ mod tests {
             c.get_mut().write_all(b"{\"type\":\"history\",\"after_id\":0}\n").await.unwrap();
             let mut line = String::new();
             c.read_line(&mut line).await.unwrap();
-            assert_eq!(serde_json::from_str::<NewBlock>(&line).unwrap().id, 1);
+            let page: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(page["blocks"][0]["id"], 1);
+            assert_eq!(page["after_id"], 1);
+            assert_eq!(page["has_more"], false);
             c.get_mut().write_all(b"{\"type\":\"history\",\"after_id\":1}\n{\"type\":\"publish\",\"block\":\"live\"}\n").await.unwrap();
+            line.clear();
+            c.read_line(&mut line).await.unwrap();
+            let page: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(page["blocks"], serde_json::json!([]));
+            assert_eq!(page["has_more"], false);
             line.clear();
             c.read_line(&mut line).await.unwrap();
             assert_eq!(serde_json::from_str::<NewBlock>(&line).unwrap().id, 2);

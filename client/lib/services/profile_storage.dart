@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import '../crypto/block_crypto.dart';
 import '../crypto/windows_storage_crypto.dart';
 import 'friends_repository.dart';
+import 'chat_service.dart';
 
 String storageId(String value) =>
     blockDigest(value).replaceAll('/', '_').replaceAll('+', '-');
@@ -117,14 +118,68 @@ class LocalProfile {
   final Directory directory;
   final FriendsRepository friends;
   bool _closed = false;
+  ChatService? _chat;
+  Future<void> _sessionWork = Future.value();
+  ChatService? get chat => _chat;
   LocalProfile(this.name, this.directory, this.friends);
   PrivateStorage get history =>
       AtomicFileStorage(File('${directory.path}/history.json'));
   PrivateStorage get settings =>
       AtomicFileStorage(File('${directory.path}/settings.json'));
+
+  Future<ChatService> connectChat({
+    required String host,
+    required int port,
+    String profileName = '',
+  }) {
+    final next = _sessionWork.then((_) async {
+      if (_closed) throw StateError('Profile is closed');
+      final current = _chat;
+      if (current != null &&
+          !current.isStopped &&
+          current.host == host &&
+          current.port == port) {
+        return current;
+      }
+      if (current != null) {
+        await current.retrySave();
+        if (current.storageError != null) {
+          throw StateError(current.storageError!);
+        }
+        await current.disconnect();
+        // Drain and persist any messages received while stopping the socket.
+        await current.retrySave();
+        if (current.storageError != null) {
+          throw StateError(current.storageError!);
+        }
+        current.dispose();
+        _chat = null;
+      }
+      final service = await ChatService.connect(
+        host: host,
+        port: port,
+        friends: friends,
+        historyStorage: history,
+        profileName: profileName,
+      );
+      if (_closed) {
+        await service.disconnect();
+        service.dispose();
+        throw StateError('Profile is closed');
+      }
+      return _chat = service;
+    });
+    _sessionWork = next.then<void>((_) {}).catchError((Object _) {});
+    return next;
+  }
+
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    await _sessionWork;
+    await _chat?.disconnect();
+    _chat?.dispose();
+    _chat = null;
     await friends.flush();
     friends.dispose();
   }

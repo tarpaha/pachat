@@ -177,9 +177,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
             ),
             if (service.isDisconnected)
-              const Padding(
-                padding: EdgeInsets.all(8),
-                child: Text('Disconnected. Return to reconnect.'),
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: TextButton(
+                  onPressed: service.reconnect,
+                  child: const Text('Disconnected. Retry connection'),
+                ),
               ),
             if (service.error != null)
               Padding(

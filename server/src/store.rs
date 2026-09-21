@@ -1,10 +1,12 @@
 use crate::protocol::NewBlock;
 
+pub const HISTORY_PAGE_SIZE: usize = 100;
+
 /// Stores opaque blocks. Implementations own ID allocation and persistence.
 pub trait BlockStore: Send {
     fn database_id(&self) -> &str;
     fn append(&mut self, block: String) -> Result<NewBlock, String>;
-    fn latest_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String>;
+    fn page_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String>;
 }
 
 #[cfg(test)]
@@ -18,16 +20,14 @@ impl BlockStore for InMemoryBlockStore {
     fn database_id(&self) -> &str {
         "00000000000000000000000000000000"
     }
-    fn latest_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String> {
-        let mut records: Vec<_> = self
+    fn page_after(&self, after_id: u64) -> Result<Vec<NewBlock>, String> {
+        let records: Vec<_> = self
             .blocks
             .iter()
-            .rev()
-            .take_while(|record| record.id > after_id)
-            .take(20)
+            .filter(|record| record.id > after_id)
+            .take(HISTORY_PAGE_SIZE)
             .cloned()
             .collect();
-        records.reverse();
         Ok(records)
     }
 
@@ -50,21 +50,21 @@ impl BlockStore for InMemoryBlockStore {
 mod tests {
     use super::*;
     #[test]
-    fn history_returns_only_latest_twenty_after_cursor_in_order() {
+    fn history_returns_first_page_after_cursor_in_order() {
         let mut store = InMemoryBlockStore::default();
-        assert!(store.latest_after(0).unwrap().is_empty());
+        assert!(store.page_after(0).unwrap().is_empty());
         for _ in 0..1000 {
             store.append("opaque".into()).unwrap();
         }
         let ids = |after| {
             store
-                .latest_after(after)
+                .page_after(after)
                 .unwrap()
                 .iter()
                 .map(|r| r.id)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(ids(0), (981..=1000).collect::<Vec<_>>());
+        assert_eq!(ids(0), (1..=100).collect::<Vec<_>>());
         assert_eq!(ids(990), (991..=1000).collect::<Vec<_>>());
         assert!(ids(1000).is_empty());
         assert!(ids(1001).is_empty());

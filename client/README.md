@@ -13,7 +13,7 @@ flutter run -d windows
 
 The first screen lists local profiles. Enter `Alice` and choose **Create / open profile**. Open another application window and choose `Bob`. Each profile has its own friends, keys, server settings and history. Select the same profile on the next launch to recover its saved friends. Names are case-insensitive. Use Back from the connection screen to switch profiles.
 
-Only one window can use a given profile at a time. A held file lock is released on closing the profile or exiting the process. Different profiles can run concurrently against the same server. Profiles are local organizational identities, not password-protected accounts; processes running as the same OS user can access their storage.
+Use one running owner per profile; simultaneous writers from other windows or isolates are not currently protected by a file lock. Different profiles can run concurrently against the same server. Profiles are local organizational identities, not password-protected accounts; processes running as the same OS user can access their storage.
 
 Start the Rust server separately (see `../server/README.md`). Default connection: `127.0.0.1:9000`. Profiles and their names are never sent to the server. There is no registration or presence list. On Android, use the server machine's reachable address, not the phone's localhost.
 
@@ -35,7 +35,7 @@ Profiles live under the platform application-support directory, in `profiles/<ha
 - Windows: each profile's friends and RSA private keys are protected with Windows DPAPI in `friends.dpapi`. The old plugin's shared `flutter_secure_storage.dat` file is not used. Writes go to a temporary file, are flushed, and then renamed into place. Failed decryption does not delete the file.
 - Android: `flutter_secure_storage` uses a separate storage namespace for each profile, backed by Android key protection. Automatic Android backup is disabled.
 - Settings and received history are separate files inside the profile folder. `history.json` groups messages by database ID, independently of the configured host and port.
-- History format: `{"version":3,"activeDatabaseId":"<database-id>","databases":{"<database-id>":[{"id":1,"block":"..."}]}}`. It contains only original message IDs and encrypted block strings, with no cached plaintext, friend identity or timestamp. Earlier development history formats are not migrated.
+- History format: `{"version":4,"activeDatabaseId":"<database-id>","cursors":{"<database-id>":1},"databases":{"<database-id>":[{"id":1,"block":"..."}]}}`. It contains only original message IDs and encrypted block strings, with no cached plaintext, friend identity or timestamp. Version 3 caches retain their blocks but replay from cursor 0 once to heal gaps left by the latest-20 API. Earlier development history formats are not migrated.
 - Incoming text is decrypted again with the selected profile's keys when loading history or changing friends. Decoded text exists only in memory.
 - Failed history writes show a warning and a **Retry saving history** button. The TCP connection stays open and blocks stay in memory. Subsequent saves retry the full received history. Closing the window before a successful retry can lose unsaved blocks.
 
@@ -51,14 +51,22 @@ Restore backup merges missing keys into the current profile, preserving existing
 
 ## Chat behavior
 
-- The last active database's cached history opens before the connection completes and remains readable if connection fails. The server's initial `server_info` selects the matching database cache (empty for a new database); only then does the client request history after that cache's highest message ID (or 0). At most the latest 20 newer blocks are returned. Earlier missed blocks are not downloaded automatically. Replies are merged in ID order, ignoring repeated identical ID/block pairs. Other databases' caches are retained.
-- Only blocks received in `new_block` are added to history. There is no separate outgoing history or outgoing status.
+- The last active database's cached history opens before the connection completes and remains readable if connection fails. The server's initial `server_info` selects the matching database cache. The client requests history after its confirmed synchronization cursor, independently of the highest cached ID. All subsequent blocks stream in ordered pages of at most 100. Sending becomes available after the final page. Identical database/ID/block repeats are ignored; conflicting blocks for the same ID stop the connection. Other databases' caches are retained.
+- Only blocks received in `history_page` or live `new_block` events are added to history. There is no separate outgoing history or outgoing status.
 - The profile generates and securely saves an own RSA pair once. Existing profiles gain this pair on first opening after the update. Its public key is not exposed in the friends UI or sent to the server. Each publication includes a copy encrypted for this key. When the block returns, own keys are tried first; successful decryption displays You on the right. This also works after restarting or restoring the profile backup. Older blocks without a self copy cannot be recovered this way.
 - Unknown or malformed encrypted content never exposes message text.
-- Both the database ID and message IDs persist across server restarts. A newly created database has a new ID and a separate cache. A copy of an existing database retains its ID. Client and server must both support `server_info`.
+- Both the database ID and message IDs persist across server restarts. A newly created database has a new ID and a separate cache. A copy of an existing database retains its ID. Client and server must both support `history_version:2` and `history_page`; update them together. Restoring an older server backup with the same database ID is not automatically repaired.
 - Maximum plaintext: 16 KiB; maximum 256 friend copies plus one self copy. Sending without imported friends is allowed and creates only the self copy.
 
-This is a test implementation: the server keeps an unbounded SQLite log and client history rewrites its block list. There is no history pagination, forward secrecy, metadata anonymity, or multi-device synchronization.
+This is a test implementation: the server keeps an unbounded SQLite log and client history rewrites its block list. There is no forward secrecy, metadata anonymity, or multi-device key synchronization.
+
+## Session and processing architecture
+
+- `MessageRepository` owns decryption, deduplication, ordered merging, per-database cursors and raw-only persistence. It is usable without a Flutter screen or a network connection. Mutations, friend-key refreshes and saves share one queue. A page's cursor and blocks are written together; failed writes keep the previous durable cursor, so restart replays anything not saved.
+- `ChatService` owns TCP and synchronization. It reconnects after failures with exponential delays from 1 to 32 seconds and resumes from the repository cursor. A page must arrive within 30 seconds during synchronization. App resume requests a fresh connection to recover a stale socket. Stop/close cancels retries; outgoing messages are not automatically retried because publication acknowledgements are not part of the protocol.
+- `LocalProfile` owns one session and serializes connection changes. Screens subscribe to it; returning from the device chat to the connection screen keeps receiving and storing messages. Reopening the chat reuses the same session. Leaving a desktop profile closes its session before disposing its keys. Changing the server drains the previous session and saves pending history first.
+- This supplies the processing foundation for Android push and a Windows tray, but does not yet add either. Android may suspend or kill the process; all missed history is retrieved on the next successful connection.
+- The repository queue serializes one instance in one isolate. A future background push handler must acquire exclusive ownership of the profile or send work to its existing owner; independently opening a second writer is not supported. A cross-isolate/background storage coordinator is still needed before adding that entry point.
 
 ## Checks
 
@@ -74,4 +82,4 @@ For the real Rust/Flutter integration test, build the server and pass the execut
 flutter test --dart-define=PACHAT_SERVER_BIN=C:/code/pachat/server/target/debug/pachat-server.exe
 ```
 
-Without that define the real-server test is skipped. Windows profile tests exercise actual DPAPI files, persistence, profile exclusion and preservation of corrupt files. Network tests cover encrypted exchange, raw-only history, reopening with and without matching keys, and a failed history write without disconnection.
+Without that define the real-server test is skipped. Windows profile tests exercise actual DPAPI files, persistence, profile isolation and preservation of corrupt files. Tests cover encrypted exchange against the real Rust server, raw-only history, reopening with and without matching keys, failed history writes, migration of legacy gaps, page-resume after disconnection, pre-history live events, headless ingestion and receiving while the device chat screen is closed.

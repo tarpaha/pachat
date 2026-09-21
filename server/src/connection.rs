@@ -1,6 +1,7 @@
 use crate::{
     protocol::{NewBlock, Request},
     server::ChatServer,
+    store::HISTORY_PAGE_SIZE,
 };
 use std::sync::Arc;
 use tokio::{
@@ -21,7 +22,7 @@ pub async fn handle(
     let mut reader = BufReader::new(reader);
     let mut line = Vec::new();
     let run = async {
-        let hello = serde_json::json!({"type": "server_info", "database_id": server.database_id});
+        let hello = serde_json::json!({"type": "server_info", "database_id": server.database_id, "history_version": 2});
         writer.write_all(format!("{hello}\n").as_bytes()).await?;
         loop {
             let records = tokio::select! {
@@ -35,10 +36,25 @@ pub async fn handle(
                             continue;
                         }
                         Ok(Request::History { after_id }) => {
-                            let (records, subscription) = server.history(after_id).await
-                                .map_err(std::io::Error::other)?;
-                            events = subscription;
-                            records
+                            let mut cursor = after_id;
+                            loop {
+                                let (blocks, subscription) = server.history(cursor).await
+                                    .map_err(std::io::Error::other)?;
+                                let has_more = blocks.len() == HISTORY_PAGE_SIZE;
+                                if let Some(last) = blocks.last() { cursor = last.id; }
+                                let page = serde_json::json!({
+                                    "type": "history_page", "blocks": blocks,
+                                    "after_id": cursor, "has_more": has_more,
+                                });
+                                writer.write_all(format!("{page}\n").as_bytes()).await?;
+                                if !has_more {
+                                    // The final page and subscription were captured under
+                                    // the publication lock. Later blocks arrive live.
+                                    events = subscription;
+                                    break;
+                                }
+                            }
+                            continue;
                         }
                         _ => break,
                     }

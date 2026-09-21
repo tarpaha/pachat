@@ -6,48 +6,42 @@ import '../crypto/block_crypto.dart';
 import '../models/chat_event.dart';
 import '../protocol/messages.dart';
 import 'friends_repository.dart';
-import 'history_cache.dart';
+import 'message_repository.dart';
 
 String _encrypt((String, List<FriendKey>) args) =>
     encryptBlock(args.$1, args.$2);
-List<ChatEntry> _decode((List<ChatEntry>, List<FriendKey>, Set<String>) args) =>
-    args.$1.map((record) {
-      final decoded = decryptBlock(record.block, args.$2);
-      return ChatEntry(
-        serverId: record.serverId,
-        block: record.block,
-        friendKey: decoded?.friendKey,
-        text: decoded?.text,
-        timestamp: decoded?.timestamp,
-        fromSelf: decoded != null && args.$3.contains(decoded.friendKey),
-      );
-    }).toList();
 
+/// Connection and catch-up coordinator; the profile owns its lifetime.
 class ChatService extends ChangeNotifier {
-  final FriendsRepository friends;
-  final PrivateStorage historyStorage;
+  final MessageRepository messages;
   final String profileName;
+  final String host;
+  final int port;
+  final Duration reconnectDelay;
   Socket? _socket;
-  List<ChatEntry> _entries;
-  final HistoryCache _history;
-  bool databaseVerified = false;
-  Future<void> _work = Future.value();
   late final Future<void> _receiving;
-  final Completer<void> _ready = Completer<void>();
-  bool _connecting = true;
-  bool _disconnected = false, _disposed = false;
-  String? error;
-  String? storageError;
+  Future<void> _sending = Future.value();
+  final Completer<void> _stopped = Completer<void>();
+  Completer<void>? _wake;
+  Completer<void> _ready = Completer<void>();
+  bool _connecting = true, _disconnected = false, _disposed = false;
+  String? _error;
+
   ChatService._(
-    this.friends,
-    this.historyStorage,
-    this._entries,
+    this.messages,
     this.profileName,
-    this._history,
+    this.host,
+    this.port,
+    this.reconnectDelay,
   );
-  List<ChatEntry> get entries => List.unmodifiable(_entries);
+  FriendsRepository get friends => messages.friends;
+  List<ChatEntry> get entries => messages.entries;
+  bool get databaseVerified => messages.databaseVerified;
   bool get isDisconnected => _disconnected;
+  bool get isStopped => _stopped.isCompleted;
   bool get isConnecting => _connecting;
+  String? get error => _error ?? messages.processingError;
+  String? get storageError => messages.storageError;
 
   static Future<ChatService> connect({
     required String host,
@@ -55,179 +49,166 @@ class ChatService extends ChangeNotifier {
     required FriendsRepository friends,
     required PrivateStorage historyStorage,
     String profileName = '',
+    Duration reconnectDelay = const Duration(seconds: 1),
   }) async {
-    await friends.ensureOwnKey();
-    final saved = await historyStorage.read();
-    final history = HistoryCache.decode(saved);
-    final entries = await compute(_decode, (
-      history.preview,
-      friends.decryptionKeys,
-      friends.ownPublicKeys,
-    ));
-    final service = ChatService._(
-      friends,
-      historyStorage,
-      entries,
-      profileName,
-      history,
+    final messages = await MessageRepository.open(
+      friends: friends,
+      storage: historyStorage,
     );
-    friends.addListener(service._friendsChanged);
-    service._receiving = service._connectAndReceive(host, port);
+    final service = ChatService._(
+      messages,
+      profileName,
+      host,
+      port,
+      reconnectDelay,
+    );
+    messages.addListener(service._notify);
+    service._receiving = service._run();
     return service;
-  }
-
-  Future<void> _connectAndReceive(String host, int port) async {
-    StreamIterator<String>? lines;
-    try {
-      final socket = await Socket.connect(
-        host,
-        port,
-        timeout: const Duration(seconds: 5),
-      );
-      if (_disposed || _disconnected) {
-        socket.destroy();
-        return;
-      }
-      _socket = socket;
-      socket.setOption(SocketOption.tcpNoDelay, true);
-      lines = StreamIterator(readLines(socket));
-      if (!await lines.moveNext().timeout(const Duration(seconds: 5))) {
-        throw const FormatException(
-          'Server closed before providing its database ID',
-        );
-      }
-      final databaseId = decodeDatabaseId(lines.current);
-      await _serial(() async {
-        _entries = await compute(_decode, (
-          _history.databases[databaseId] ?? <ChatEntry>[],
-          friends.decryptionKeys,
-          friends.ownPublicKeys,
-        ));
-        _history.activeDatabaseId = databaseId;
-        databaseVerified = true;
-        _notify();
-        await _persist();
-      });
-      final lastId = _entries.fold<int>(
-        0,
-        (id, e) => e.serverId > id ? e.serverId : id,
-      );
-      socket.add(utf8.encode(encodeHistory(lastId)));
-      await socket.flush();
-      _connecting = false;
-      _ready.complete();
-      _notify();
-      await _receive(lines);
-    } catch (e) {
-      error = 'Could not connect: $e';
-      _disconnected = true;
-      _socket?.destroy();
-    } finally {
-      await lines?.cancel();
-      _connecting = false;
-      if (!_ready.isCompleted) _ready.complete();
-      _notify();
-    }
   }
 
   void _notify() {
     if (!_disposed) notifyListeners();
   }
 
-  Future<void> _serial(Future<void> Function() action) {
-    final next = _work.then((_) => action());
-    _work = next.catchError((Object _) {});
+  Future<void> _run() async {
+    var failures = 0;
+    while (!_stopped.isCompleted) {
+      StreamIterator<String>? lines;
+      _connecting = true;
+      _notify();
+      try {
+        final socket = await Socket.connect(
+          host,
+          port,
+          timeout: const Duration(seconds: 5),
+        );
+        if (_stopped.isCompleted) {
+          socket.destroy();
+          break;
+        }
+        _socket = socket;
+        socket.setOption(SocketOption.tcpNoDelay, true);
+        lines = StreamIterator(readLines(socket));
+        if (!await lines.moveNext().timeout(const Duration(seconds: 10))) {
+          throw const FormatException(
+            'Server closed before providing its database ID',
+          );
+        }
+        final databaseId = decodeDatabaseId(lines.current);
+        await messages.selectDatabase(databaseId);
+        socket.add(utf8.encode(encodeHistory(messages.cursor)));
+        await socket.flush();
+        var syncing = true;
+        while (!_stopped.isCompleted) {
+          final available = syncing
+              ? await lines.moveNext().timeout(const Duration(seconds: 30))
+              : await lines.moveNext();
+          if (!available) break;
+          final line = lines.current;
+          if (syncing) {
+            // Live events before our request are covered by history. They must
+            // not advance the cursor past missing historical blocks.
+            if ((jsonDecode(line) as Map)['type'] == 'new_block') continue;
+            final page = HistoryPage.decode(line, messages.cursor);
+            await messages.ingest(page.blocks, throughId: page.afterId);
+            if (!page.hasMore) {
+              syncing = false;
+              failures = 0;
+              _disconnected = false;
+              _connecting = false;
+              _error = null;
+              if (!_ready.isCompleted) _ready.complete();
+              _notify();
+            }
+          } else {
+            final block = NewBlock.decode(line);
+            if (block.id < messages.cursor) {
+              throw const FormatException('Live message IDs moved backwards');
+            }
+            await messages.ingest([block], throughId: block.id);
+          }
+        }
+        if (!_stopped.isCompleted) _error = 'Connection closed. Reconnecting…';
+      } catch (e) {
+        if (!_stopped.isCompleted) _error = 'Connection interrupted: $e';
+      } finally {
+        _socket?.destroy();
+        _socket = null;
+        await lines?.cancel();
+        _disconnected = true;
+        _connecting = false;
+        if (!_ready.isCompleted) _ready.complete();
+        _ready = Completer<void>();
+        _notify();
+      }
+      if (_stopped.isCompleted) break;
+      final multiplier = 1 << failures.clamp(0, 5);
+      failures++;
+      _wake = Completer<void>();
+      final timer = Timer(reconnectDelay * multiplier, () {
+        if (!(_wake?.isCompleted ?? true)) _wake!.complete();
+      });
+      await Future.any([_wake!.future, _stopped.future]);
+      timer.cancel();
+      _wake = null;
+    }
+  }
+
+  /// Called on app resume or by an explicit retry; independent of navigation.
+  void reconnect() {
+    if (_stopped.isCompleted) return;
+    if (_wake != null) {
+      if (!_wake!.isCompleted) _wake!.complete();
+    } else {
+      _socket?.destroy();
+    }
+  }
+
+  Future<void> retrySave() => messages.retrySave();
+
+  Future<void> sendChat(String text) {
+    final next = _sending.then((_) async {
+      if (_stopped.isCompleted) throw StateError('Disconnected');
+      if (_connecting) await _ready.future;
+      if (_disconnected || _socket == null) throw StateError('Disconnected');
+      if (text.trim().isEmpty) return;
+      final socket = _socket!;
+      final block = await compute(_encrypt, (text, friends.recipients));
+      if (_stopped.isCompleted ||
+          _connecting ||
+          _disconnected ||
+          _socket != socket) {
+        throw StateError('Connection changed while preparing message');
+      }
+      socket.add(utf8.encode(encodePublish(block)));
+      await socket.flush();
+    });
+    _sending = next.catchError((Object _) {});
     return next;
   }
 
-  void _friendsChanged() {
-    unawaited(
-      _serial(() async {
-        _entries = await compute(_decode, (
-          _entries,
-          friends.decryptionKeys,
-          friends.ownPublicKeys,
-        ));
-        _notify();
-      }).catchError((Object e) {
-        error = 'Could not refresh messages: $e';
-        _notify();
-      }),
-    );
-  }
-
-  Future<void> _persist() async {
-    try {
-      if (databaseVerified) {
-        _history.databases[_history.activeDatabaseId!] = _entries;
-      }
-      await historyStorage.write(_history.encode());
-      storageError = null;
-    } catch (e) {
-      storageError =
-          'History was not saved. Messages remain in this window. $e';
-    }
-    _notify();
-  }
-
-  Future<void> retrySave() => _serial(_persist);
-  Future<void> sendChat(String text) async {
-    await _ready.future;
-    await _serial(() async {
-      if (_disconnected) throw StateError('Disconnected');
-      if (text.trim().isEmpty) return;
-      final block = await compute(_encrypt, (text, friends.recipients));
-      final line = encodePublish(block);
-      if (_disconnected) throw StateError('Disconnected');
-      _socket!.add(utf8.encode(line));
-      await _socket!.flush();
-    });
-  }
-
-  Future<void> _receive(StreamIterator<String> lines) async {
-    try {
-      while (await lines.moveNext()) {
-        final event = NewBlock.decode(lines.current);
-        await _serial(() async {
-          if (_entries.any(
-            (e) => e.serverId == event.id && e.block == event.block,
-          )) {
-            return;
-          }
-          final decoded = await compute(_decode, (
-            [ChatEntry(serverId: event.id, block: event.block)],
-            friends.decryptionKeys,
-            friends.ownPublicKeys,
-          ));
-          _entries = [..._entries, ...decoded]
-            ..sort((a, b) => a.serverId.compareTo(b.serverId));
-          _notify();
-          await _persist();
-        });
-      }
-    } catch (e) {
-      error = 'Receiving stopped: $e';
-    } finally {
-      _disconnected = true;
-      _socket?.destroy();
-      _notify();
-    }
+  void _stop() {
+    if (!_stopped.isCompleted) _stopped.complete();
+    _disconnected = true;
+    if (!_ready.isCompleted) _ready.complete();
+    _socket?.destroy();
   }
 
   Future<void> disconnect() async {
-    _disconnected = true;
-    _socket?.destroy();
+    _stop();
     await _receiving;
-    await _work;
+    await _sending;
+    await messages.flush();
     _notify();
   }
 
   @override
   void dispose() {
     _disposed = true;
-    _disconnected = true;
-    friends.removeListener(_friendsChanged);
-    _socket?.destroy();
+    _stop();
+    messages.removeListener(_notify);
+    unawaited(disconnect().then((_) => messages.dispose()));
     super.dispose();
   }
 }

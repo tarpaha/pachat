@@ -23,10 +23,22 @@ void main() {
           sockets.add(socket);
           socket.add(
             utf8.encode(
-              '${jsonEncode({'type': 'server_info', 'database_id': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'})}\n',
+              '${jsonEncode({'type': 'server_info', 'database_id': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'history_version': 2})}\n',
             ),
           );
-          socket.listen((_) {}, onDone: () => disconnected = true);
+          socket
+              .cast<List<int>>()
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())
+              .listen((line) {
+                if (jsonDecode(line)['type'] == 'history') {
+                  socket.add(
+                    utf8.encode(
+                      '${jsonEncode({'type': 'history_page', 'blocks': [], 'after_id': 0, 'has_more': false})}\n',
+                    ),
+                  );
+                }
+              }, onDone: () => disconnected = true);
         });
         final profile = await ProfileCatalog(root).open('Alice');
         await Prefs.save(

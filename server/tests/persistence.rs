@@ -56,7 +56,7 @@ fn acknowledged_messages_survive_process_kill_and_ids_continue() {
     let path = dir.path().join("data/chat.db");
     {
         let (_server, mut socket) = start(&path);
-        for id in 1..=25 {
+        for id in 1..=250 {
             send(
                 &mut socket,
                 json!({"type":"publish", "block":format!("opaque-{id}")}),
@@ -67,16 +67,37 @@ fn acknowledged_messages_survive_process_kill_and_ids_continue() {
     }
     let (_server, mut socket) = start(&path);
     send(&mut socket, json!({"type":"history", "after_id":0}));
-    for id in 6..=25 {
-        assert_eq!(
-            receive(&mut socket),
-            json!({"type":"new_block", "id":id, "block":format!("opaque-{id}")})
-        );
+    let mut next_id = 1;
+    let mut page_sizes = Vec::new();
+    loop {
+        let page = receive(&mut socket);
+        assert_eq!(page["type"], "history_page");
+        let blocks = page["blocks"].as_array().unwrap();
+        page_sizes.push(blocks.len());
+        for block in blocks {
+            assert_eq!(
+                *block,
+                json!({"type":"new_block", "id":next_id,
+                "block":format!("opaque-{next_id}")})
+            );
+            next_id += 1;
+        }
+        assert_eq!(page["after_id"], next_id - 1);
+        if page["has_more"] == false {
+            break;
+        }
     }
-    send(&mut socket, json!({"type":"history", "after_id":25}));
+    assert_eq!(next_id, 251);
+    assert_eq!(page_sizes, [100, 100, 50]);
+    send(&mut socket, json!({"type":"history", "after_id":250}));
+    assert_eq!(
+        receive(&mut socket),
+        json!({"type":"history_page",
+        "blocks":[], "after_id":250, "has_more":false})
+    );
     send(
         &mut socket,
         json!({"type":"publish", "block":"after restart"}),
     );
-    assert_eq!(receive(&mut socket)["id"], 26);
+    assert_eq!(receive(&mut socket)["id"], 251);
 }

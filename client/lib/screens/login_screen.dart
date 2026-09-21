@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../services/chat_service.dart';
 import '../services/profile_storage.dart';
 import '../services/prefs.dart';
 import 'chat_screen.dart';
@@ -18,7 +17,7 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen> with WidgetsBindingObserver {
   final _host = TextEditingController(text: '127.0.0.1');
   final _port = TextEditingController(text: '9000');
   final _form = GlobalKey<FormState>();
@@ -28,6 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
@@ -70,33 +70,25 @@ class _LoginScreenState extends State<LoginScreen> {
       do {
         final prefs = await Prefs.load(widget.profile.settings);
         final host = prefs.host, port = prefs.port;
-        final service = await ChatService.connect(
+        final service = await widget.profile.connectChat(
           host: host,
           port: port,
-          friends: _friends,
-          historyStorage: widget.profile.history,
           profileName: widget.showProfileName ? widget.profile.name : '',
         );
         if (!mounted) {
-          service.dispose();
           return;
         }
-        try {
-          reconnect =
-              await Navigator.push<bool>(
-                context,
-                MaterialPageRoute<bool>(
-                  builder: (_) => ChatScreen(
-                    service: service,
-                    settings: widget.profile.settings,
-                  ),
+        reconnect =
+            await Navigator.push<bool>(
+              context,
+              MaterialPageRoute<bool>(
+                builder: (_) => ChatScreen(
+                  service: service,
+                  settings: widget.profile.settings,
                 ),
-              ) ??
-              false;
-        } finally {
-          await service.disconnect();
-          service.dispose();
-        }
+              ),
+            ) ??
+            false;
       } while (reconnect && mounted);
       if (mounted && widget.showProfileName && Navigator.canPop(context)) {
         Navigator.pop(context);
@@ -109,7 +101,13 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) widget.profile.chat?.reconnect();
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _host.dispose();
     _port.dispose();
 
