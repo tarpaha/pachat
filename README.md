@@ -1,101 +1,101 @@
 # PaChat
 
-PaChat — экспериментальное приложение для обмена зашифрованными текстовыми сообщениями через собственный сервер. Клиент работает на Android и Windows. Сервер хранит зашифрованные сообщения и передаёт их клиентам; расшифровка происходит на устройствах пользователей.
+PaChat is an experimental app for exchanging encrypted text messages through your own server. The client runs on Android and Windows. The server stores encrypted messages and forwards them to clients; messages are decrypted on users' devices.
 
-В приложении нет серверных аккаунтов, регистрации и списка пользователей. Имена друзей, ключи и настройки хранятся в локальном профиле. Для начала общения участники подключаются к одному серверу и обмениваются открытыми ключами через удобный внешний канал.
+There are no server accounts, registration, or user directory. Friend names, keys, and settings belong to a local profile. To start chatting, participants connect to the same server and exchange public keys through an external channel of their choice.
 
-## Основная идея
+## Core idea
 
-Сервер не выбирает получателя: он рассылает каждый зашифрованный пакет всем подключённым клиентам. Прочитать содержимое могут только те, для чьих ключей отправитель зашифровал сообщение.
+The server broadcasts each encrypted package to every connected client. Only clients whose keys were included by the sender can read its contents.
 
-В текущей версии каждое сообщение отправляется сразу для **всех добавленных открытых ключей друзей**, а также для самого отправителя. Это общая лента сообщений, а не набор отдельных личных диалогов. Если ключей друзей ещё нет, сообщение сможет прочитать только отправитель.
+In the current version, each message is encrypted for **all added friends' public keys**, as well as for the sender. The app displays a shared message feed rather than separate private conversations. If no friends' keys have been added, only the sender can read the message.
 
-## Как передаётся сообщение
+## How a message travels
 
 ```mermaid
 sequenceDiagram
-    participant A as Отправитель
-    participant S as Сервер PaChat
-    participant B as Друг с подходящим ключом
-    participant C as Другой клиент без подходящего ключа
+    participant A as Sender
+    participant S as PaChat server
+    participant B as Friend with a matching key
+    participant C as Client without a matching key
 
-    A->>A: Шифрует текст для друзей и для себя
-    A->>S: Передаёт зашифрованный пакет
-    S->>S: Сохраняет пакет в истории
-    S-->>A: Возвращает сохранённый пакет
-    S-->>B: Передаёт тот же пакет
-    S-->>C: Передаёт тот же пакет
-    A->>A: Расшифровывает и показывает своё сообщение
-    B->>B: Расшифровывает и показывает текст
-    C->>C: Показывает неизвестное сообщение без текста
+    A->>A: Encrypts text for friends and itself
+    A->>S: Sends the encrypted package
+    S->>S: Saves the package in history
+    S-->>A: Returns the saved package
+    S-->>B: Forwards the same package
+    S-->>C: Forwards the same package
+    A->>A: Decrypts and displays its own message
+    B->>B: Decrypts and displays the text
+    C->>C: Displays an unknown message without its text
 ```
 
-Сначала сервер сохраняет сообщение и только затем рассылает его. Отправитель добавляет сообщение в свою историю после получения пакета обратно от сервера. Отдельных отметок о прочтении или получении собеседником пока нет.
+The server saves each message before broadcasting it. The sender adds the message to its history when the package returns from the server. Delivery receipts for other participants and read receipts are not available yet.
 
-## Как начать общение
+## Getting started
 
-1. Запустите сервер на компьютере, доступном участникам. Инструкции находятся в [описании сервера](server/README.md).
-2. Откройте клиент и укажите адрес и порт этого сервера. Для телефона нужен доступный по сети адрес компьютера с сервером.
-3. Добавьте друга в разделе **Friends**. Приложение создаст ключи для этой записи.
-4. Передайте другу свой открытый ключ кнопкой **Share public key** или **Copy key**. Получив этот ключ, друг сможет отправлять сообщения, которые вы сможете расшифровать.
-5. Получите открытый ключ друга и добавьте его в ту же карточку через **Add friend's key**. Теперь вы можете отправлять сообщения друг другу.
+1. Start the server on a computer reachable by all participants. See the [server guide](server/README.md) for instructions.
+2. Open the client and enter the server's address and port. A phone needs the server computer's address on a reachable network.
+3. Add a friend in **Friends**. The app creates keys for that entry.
+4. Send your public key to your friend using **Share public key** or **Copy key**. Your friend can then send messages that you can decrypt.
+5. Obtain your friend's public key and add it to the same card using **Add friend's key**. You can now send messages to each other.
 
-Открытыми ключами можно делиться. Закрытые ключи остаются на устройстве и нужны для чтения сообщений. Сервер PaChat не участвует в обмене ключами.
+Public keys can be shared. Private keys remain on the device and are needed to read messages. The PaChat server does not participate in key exchange.
 
-На Windows можно создавать разные локальные профили, например Alice и Bob. У каждого свои друзья, ключи, настройки и история. На Android приложение использует постоянный профиль устройства без отдельного экрана выбора. При наличии сохранённых настроек подключение начинается автоматически.
+On Windows, you can create separate local profiles, such as Alice and Bob. Each has its own friends, keys, settings, and history. On Android, the app uses a persistent device profile without a profile selection screen. It connects automatically when server settings have been saved.
 
-## История и восстановление связи
+## History and reconnection
 
-Клиент сразу показывает сохранённую на устройстве историю, даже если сервер временно недоступен. После подключения он запрашивает все пропущенные сообщения небольшими порциями. Если связь оборвалась во время загрузки, синхронизация продолжается при следующем подключении; повторно полученные сообщения не дублируются.
+The client immediately displays history saved on the device, even if the server is temporarily unavailable. After connecting, it requests all missed messages in small batches. If the connection drops during the download, synchronization resumes on the next connection; messages received again are not duplicated.
 
 ```mermaid
 sequenceDiagram
-    participant C as Клиент
-    participant S as Сервер PaChat
+    participant C as Client
+    participant S as PaChat server
 
-    C->>C: Показывает локальную историю
-    C->>S: Подключается или восстанавливает связь
-    S-->>C: Сообщает, какая история хранится на сервере
-    C->>S: Запрашивает сообщения после сохранённой позиции
-    loop Пока есть пропущенные сообщения
-        S-->>C: Передаёт очередную порцию истории
-        C->>C: Сохраняет сообщения и позицию загрузки
+    C->>C: Displays local history
+    C->>S: Connects or reconnects
+    S-->>C: Identifies the history stored on the server
+    C->>S: Requests messages after its saved position
+    loop While missed messages remain
+        S-->>C: Sends the next batch of history
+        C->>C: Saves messages and download progress
     end
-    S-->>C: Завершает догрузку
-    Note over C,S: Дальше новые сообщения поступают по мере появления
+    S-->>C: Completes the history download
+    Note over C,S: New messages now arrive as they are published
 ```
 
-История сохраняется и на сервере, и у клиента в зашифрованном виде. Перезапуск сервера с той же базой не стирает сообщения. Если сервер начинает работать с новой базой, клиент хранит её историю отдельно от прежней. Старые клиентские кеши с возможными пропусками пересинхронизируются автоматически.
+Both the server and client store history in encrypted form. Restarting the server with the same database preserves its messages. If the server starts using a new database, the client keeps that history separate from the previous one. Older client caches that may contain gaps are automatically synchronized again.
 
-При ошибке сохранения клиент показывает предупреждение и позволяет повторить запись. До успешного сохранения новые сообщения остаются только в памяти клиента и в истории сервера.
+If saving fails, the client displays a warning and lets you retry. Until a save succeeds, new messages remain only in the client's memory and the server's history.
 
-## Что работает в фоне
+## Background behavior
 
-Обработка сообщений не зависит от открытого экрана чата. На Android можно вернуться с экрана чата к экрану подключения: пока процесс приложения работает и соединение доступно, сообщения продолжают приниматься и сохраняться. После потери связи клиент пытается подключиться снова, а при возвращении в приложение обновляет соединение.
+Message processing does not depend on the chat screen being open. On Android, returning from the chat to the connection screen keeps messages arriving and being saved while the app process is running and the connection is available. The client attempts to reconnect after a connection failure and refreshes the connection when you return to the app.
 
-**Это пока не полноценная фоновая доставка Android.** Система может приостановить или завершить приложение. Push-уведомления ещё не подключены; в таком случае пропущенные сообщения будут загружены при следующем успешном подключении.
+**Full Android background delivery is not implemented yet.** The system may suspend or terminate the app. Push notifications are not connected yet; missed messages are downloaded on the next successful connection.
 
-Работа Windows-клиента в трее и системные уведомления также запланированы на будущее. Сейчас выход из профиля закрывает его соединение.
+Windows system tray support and system notifications are also planned for the future. Currently, leaving a profile closes its connection.
 
-## Ключи, резервные копии и ограничения
+## Keys, backups, and limitations
 
-Ключи защищаются средствами операционной системы. В разделе **Friends → Encrypted backup** можно создать защищённую паролем резервную копию ключей и затем восстановить её. История сообщений в эту копию не входит. Для чтения зашифрованной истории необходимы соответствующие закрытые ключи.
+Keys are protected using operating system facilities. Under **Friends → Encrypted backup**, you can create a password-protected backup of your keys and restore it later. Message history is not included in this backup. Reading encrypted history requires the corresponding private keys.
 
-PaChat пока является прототипом. Несколько особенностей важно учитывать:
+PaChat is still a prototype. Keep these limitations in mind:
 
-- Сервер не получает открытый текст, но видит подключения, сетевые адреса, время и размеры передаваемых пакетов. Анонимность не обеспечивается.
-- Отображаемое имя друга определяется локальной записью ключа. Оно не является доказательством личности отправителя: любой обладатель соответствующего открытого ключа может зашифровать для вас сообщение.
-- Локальные профили не являются защищёнными паролем аккаунтами. Один профиль следует открывать только в одном работающем экземпляре приложения.
-- Автоматической синхронизации ключей между устройствами нет.
-- История растёт без автоматической очистки. Для длительной работы нужно учитывать место на сервере и устройствах.
+- The server does not receive plaintext, but it can observe connections, network addresses, timing, and package sizes. It does not provide anonymity.
+- A friend's displayed name comes from the local key entry. It does not prove the sender's identity: anyone with the corresponding public key can encrypt a message for you.
+- Local profiles are not password-protected accounts. Open a given profile in only one running app instance at a time.
+- Keys are not automatically synchronized between devices.
+- History grows without automatic cleanup. Long-term use requires enough storage on the server and devices.
 
-Клиент и сервер следует обновлять вместе: формат передачи истории изменился, и новые клиенты требуют совместимый сервер.
+Update the client and server together: the history transfer format has changed, and new clients require a compatible server.
 
-## Состав проекта
+## Project layout
 
-| Папка | Назначение | Подробности |
+| Folder | Purpose | Details |
 | --- | --- | --- |
-| `client/` | Приложение для Android и Windows на Flutter | [Запуск, сборка и возможности клиента](client/README.md) |
-| `server/` | Сервер на Rust с постоянным хранением истории | [Запуск и обслуживание сервера](server/README.md) |
+| `client/` | Flutter app for Android and Windows | [Client setup, builds, and features](client/README.md) |
+| `server/` | Rust server with persistent message history | [Server setup and operation](server/README.md) |
 
-В отдельных README также описаны техническое устройство, команды проверки и результаты тестирования. Этот документ описывает общую работу приложения.
+The separate READMEs also cover implementation details, verification commands, and test results. This document describes how the application works as a whole.
