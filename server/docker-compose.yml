@@ -1,13 +1,22 @@
 services:
+  data-init:
+    image: debian:bookworm-slim
+    user: "0:0"
+    restart: "no"
+    network_mode: none
+    command: ["chown", "1000:1000", "/data"]
+    volumes:
+      - ./data:/data
+
   pachat-server:
     build: .
     image: pachat-server:latest
     container_name: pachat-server
     restart: unless-stopped
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     ports:
       - "9000:9000"
     volumes:
-      - pachat-data:/app/data
-
-volumes:
-  pachat-data:
+      - ./data:/app/data

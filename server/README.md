@@ -20,7 +20,17 @@ cargo run -- --host 127.0.0.1 --port 9000 --database data/test.db
 
 An unreadable or corrupt database causes startup to fail; it is never replaced with an empty database. Run one PaChat server per database file.
 
-Docker Compose mounts the named volume `pachat-data` at `/app/data`, owned by the runtime user. Rebuilding/recreating the container retains history. Removing the volume (including `docker compose down -v`) deletes that history.
+Docker Compose mounts `./data` beside `docker-compose.yml` at `/app/data`. The database is stored on the host at `server/data/pachat.db`. This directory is excluded from Git by `server/.gitignore` and from the Docker build context by `.dockerignore`. Rebuilding/recreating the container and `docker compose down -v` retain this host directory; deleting it deletes the history.
+
+From `server/`, start everything with:
+
+```sh
+docker compose up -d --build
+```
+
+Compose creates `./data` if it is missing. The `data-init` service sets the directory owner to UID/GID 1000 and exits; the server starts only after it succeeds and continues to run as the non-root `pachat` user. No manual directory creation or ownership change is needed for a fresh installation. Seeing `data-init` with status `Exited (0)` is normal. This initialization changes only the directory owner, not existing database files.
+
+If upgrading from the previous named volume `pachat-data`, stop the old server and copy the entire data directory from that volume into `server/data`, including any `-wal`/`-shm` files, before starting with this configuration. Ensure the copied files are writable by UID/GID 1000. The migration is not automatic: an empty host directory creates a new database. Keep the old volume until the migrated history has been verified.
 
 ## Protocol
 
